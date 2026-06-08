@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-color: #ffe4e4;
+  --primary-mid: #f7bebe;
+  --primary-dark: #e79191;
+  --primary-light: #fffcfb;
+  --text-dark: #5c3a3a;
+  --text-muted: #8b6b6b;
+  --accent: #e79191;
+  --card-bg: #ffffff;
+  --card-shadow: rgba(231,145,145,0.25);
+  --growth-green: #27ae60;
+  --bg-light: #fffcfb;
+  --border-color: #f5d8d8;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-light);
+  color: var(--text-dark);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f9fafb;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db #f9fafb;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-modal-in {
+  animation: modal-in 0.2s ease-out;
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+/* PPT 编辑器 textarea 样式 */
+.slide-editor-textarea {
+  background: transparent !important;
+  border: 1px dashed transparent !important;
+  outline: none !important;
+  resize: none !important;
+  overflow: hidden !important;
+  cursor: text;
+  transition: border-color 0.2s;
+  width: 100%;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.slide-editor-textarea:hover {
+  border-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+.slide-editor-textarea:focus {
+  border-color: rgba(59, 130, 246, 0.6) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.slide-editor-textarea::placeholder {
+  opacity: 0.4;
+}
+
+/* 确保幻灯片内的 textarea 不影响布局 */
+.slide-editor-textarea::-webkit-scrollbar {
+  display: none;
+}
+
+/* 动画 */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* 移动端响应式样式 */
+@media (max-width: 767px) {
+  /* 移动端全局调整 */
+  body {
+    font-size: 14px;
+  }
+  
+  /* 移动端表格滚动 */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* 移动端卡片紧凑布局 */
+  .card-grid-mobile {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  /* 移动端按钮全宽 */
+  .btn-full-width {
+    width: 100%;
+  }
+  
+  /* 移动端隐藏长文本 */
+  .text-truncate-mobile {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
+  }
+}
+
+/* 平板设备适配 */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .tablet-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+}
+
+/* 大屏幕适配 */
+@media (min-width: 1440px) {
+  .large-screen-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  /* 增加触摸目标大小 */
+  button, a, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* 移除悬停效果 */
+  .hover\:bg-pink-800:hover {
+    background-color: transparent;
+  }
+}
+
+/* 安全区域适配（刘海屏等） */
+@supports (padding: max(0px)) {
+  .safe-area-bottom {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  
+  .safe-area-top {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+}

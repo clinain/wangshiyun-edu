@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>网师云 - 师范生备课辅助系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- PPT生成辅助脚本 -->
+    <script>
+      /**
+       * PPT生成函数
+       * @param {Object} options - 生成选项
+       * @param {number} options.lessonId - 教案ID
+       * @param {boolean} options.useAI - 是否使用AI生成
+       * @param {Function} options.onProgress - 进度回调
+       * @param {Function} options.onSuccess - 成功回调
+       * @param {Function} options.onError - 错误回调
+       */
+      window.appGeneratePPT = async function(options) {
+        const { 
+          lessonId, 
+          useAI = false, 
+          onProgress, 
+          onSuccess, 
+          onError 
+        } = options;
+
+        try {
+          // 验证参数
+          if (!lessonId || isNaN(parseInt(lessonId))) {
+            throw new Error('请提供有效的教案ID');
+          }
+
+          // 获取token
+          const token = localStorage.getItem('token');
+          if (!token) {
+            throw new Error('用户未登录，请先登录');
+          }
+
+          // 显示加载状态
+          if (onProgress) {
+            onProgress({ 
+              status: 'loading', 
+              message: '正在生成PPT...',
+              step: 1,
+              totalSteps: 3 
+            });
+          }
+
+          // 发送请求
+          const response = await fetch('/api/ppt/generate', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              lessonId: parseInt(lessonId),
+              useAI: useAI
+            }),
+            timeout: 60000
+          });
+
+          if (onProgress) {
+            onProgress({ 
+              status: 'processing', 
+              message: '正在处理数据...',
+              step: 2,
+              totalSteps: 3 
+            });
+          }
+
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(result.message || `请求失败，状态码: ${response.status}`);
+          }
+
+          if (!result.success) {
+            throw new Error(result.message || '生成PPT失败');
+          }
+
+          if (onProgress) {
+            onProgress({ 
+              status: 'completed', 
+              message: 'PPT生成成功！',
+              step: 3,
+              totalSteps: 3 
+            });
+          }
+
+          if (onSuccess) {
+            onSuccess(result.data);
+          }
+
+          return result.data;
+
+        } catch (error) {
+          console.error('PPT生成错误:', error);
+          
+          if (onProgress) {
+            onProgress({ 
+              status: 'error', 
+              message: error.message || '生成失败',
+              step: 0,
+              totalSteps: 3 
+            });
+          }
+
+          if (onError) {
+            onError(error.message || '生成PPT时发生错误');
+          }
+
+          throw error;
+        }
+      };
+
+      /**
+       * 显示加载弹窗
+       * @param {string} message - 加载提示信息
+       */
+      window.showLoadingModal = function(message) {
+        const modal = document.createElement('div');
+        modal.id = 'ppt-loading-modal';
+        modal.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        `;
+
+        const content = document.createElement('div');
+        content.style.cssText = `
+          background: white;
+          border-radius: 12px;
+          padding: 32px;
+          text-align: center;
+          box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+          max-width: 400px;
+        `;
+
+        const spinner = document.createElement('div');
+        spinner.style.cssText = `
+          width: 40px;
+          height: 40px;
+          border: 4px solid #f3f3f3;
+          border-top: 4px solid #4f46e5;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+          margin: 0 auto 16px;
+        `;
+
+        const text = document.createElement('p');
+        text.textContent = message || '正在生成PPT...';
+        text.style.cssText = `
+          color: #374151;
+          font-size: 16px;
+          margin: 0;
+        `;
+
+        content.appendChild(spinner);
+        content.appendChild(text);
+        modal.appendChild(content);
+
+        // 添加动画样式
+        const style = document.createElement('style');
+        style.textContent = `
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `;
+        document.head.appendChild(style);
+
+        document.body.appendChild(modal);
+
+        return {
+          updateMessage: function(newMessage) {
+            text.textContent = newMessage;
+          },
+          close: function() {
+            modal.remove();
+            style.remove();
+          }
+        };
+      };
+
+      /**
+       * 显示提示消息
+       * @param {string} message - 消息内容
+       * @param {string} type - 消息类型: success, error, info, warning
+       */
+      window.showToast = function(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          padding: 16px 24px;
+          border-radius: 8px;
+          color: white;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-size: 14px;
+          z-index: 10000;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+          transform: translateX(120%);
+          transition: transform 0.3s ease;
+        `;
+
+        // 设置背景色
+        const colors = {
+          success: '#10b981',
+          error: '#ef4444',
+          info: '#3b82f6',
+          warning: '#f59e0b'
+        };
+        toast.style.background = colors[type] || colors.info;
+
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        // 显示动画
+        setTimeout(() => {
+          toast.style.transform = 'translateX(0)';
+        }, 10);
+
+        // 自动隐藏
+        setTimeout(() => {
+          toast.style.transform = 'translateX(120%)';
+          setTimeout(() => toast.remove(), 300);
+        }, 3000);
+      };
+    </script>
+  </body>
+</html>
