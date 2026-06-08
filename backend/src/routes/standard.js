@@ -6,6 +6,8 @@
 const express = require('express');
 const router = express.Router();
 const curriculumStandardService = require('../services/curriculumStandardService');
+const subjectsConfig = require('../config/subjectsConfig');
+const curriculumStandards = require('../config/curriculumStandards');
 
 /**
  * 检测教案
