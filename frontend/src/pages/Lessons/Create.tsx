@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
-import { lessonAPI, aiAPI } from '@/api';
+import { lessonAPI, aiAPI, standardAPI } from '@/api';
 import type { Lesson } from '@/types';
+import type { CurriculumStandard } from '@/api';
 
 const primarySubjects = ['语文', '数学', '英语', '道德与法治', '科学', '信息科技', '音乐', '美术', '体育与健康', '劳动', '书法', '综合实践活动', '心理健康'];
 const middleSubjects = ['语文', '数学', '英语', '道德与法治', '历史', '地理', '物理', '化学', '生物学', '信息技术', '音乐', '美术', '体育与健康', '劳动', '心理健康', '综合实践活动'];
@@ -59,6 +60,11 @@ const CreateLesson: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [showNewConfirm, setShowNewConfirm] = useState(false);
   const isEditingRef = React.useRef(false);
+  
+  // 新课标查询相关状态
+  const [curriculumData, setCurriculumData] = useState<CurriculumStandard | null>(null);
+  const [curriculumLoading, setCurriculumLoading] = useState(false);
+  const [curriculumError, setCurriculumError] = useState('');
 
   // 学段变化时更新学科和年级列表
   useEffect(() => {
@@ -150,6 +156,35 @@ const CreateLesson: React.FC = () => {
   }, [location.search, editIdFromUrl]);
 
   // 移除 useEffect([stage])，改为在 loadLessonForEdit 和 handleStageChange 中直接处理
+
+  // 当学科或年级变化时，获取对应的新课标内容
+  useEffect(() => {
+    if (!formData.subject) {
+      setCurriculumData(null);
+      setCurriculumError('');
+      return;
+    }
+
+    const fetchCurriculum = async () => {
+      setCurriculumLoading(true);
+      setCurriculumError('');
+      try {
+        const data = await standardAPI.getCurriculum(formData.subject, formData.grade);
+        setCurriculumData(data);
+        if (!data) {
+          setCurriculumError(`未找到「${formData.subject}」的新课标配置`);
+        }
+      } catch (err) {
+        console.error('获取新课标失败:', err);
+        setCurriculumError('获取新课标失败，请稍后重试');
+        setCurriculumData(null);
+      } finally {
+        setCurriculumLoading(false);
+      }
+    };
+
+    fetchCurriculum();
+  }, [formData.subject, formData.grade]);
 
   // 获取历史教案
   const fetchHistoryLessons = async (page = 1, keyword = '', subject = '', grade = '') => {
@@ -1052,105 +1087,214 @@ ${generatedLesson.summary || '暂无内容'}
             </div>
             </div>
 
-            {/* 右侧实时预览 */}
+            {/* 右侧新课标查询 */}
             <div className="hidden lg:block w-[420px] flex-shrink-0">
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 sticky top-4">
                 <div className="px-5 py-4 border-b border-gray-100">
                   <div className="flex items-center gap-2">
-                    <svg className="w-5 h-5 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                       </svg>
-                    <h3 className="font-semibold text-gray-800 text-sm">文档预览</h3>
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm">新课标查询</h3>
                   </div>
                 </div>
                 <div className="p-5 max-h-[calc(100vh-200px)] overflow-y-auto">
-                  {/* 标题 */}
-                  <h1 className="text-lg font-bold text-gray-900 text-center mb-1 leading-tight">
-                    {formData.title || '教案标题'}
-                  </h1>
-                  <div className="text-center text-xs text-gray-400 mb-4 pb-3 border-b border-gray-100">
-                    {formData.subject && <span>{formData.subject}</span>}
-                    {formData.subject && formData.grade && <span className="mx-1">·</span>}
-                    {formData.grade && <span>{formData.grade}</span>}
-                  </div>
-
-                  {/* 教学目标 */}
-                  {cleanTextField(formData.teachingGoals) && (
-                    <div className="mb-4">
-                      <h2 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                        教学目标
-                      </h2>
-                      <div className="text-xs text-gray-600 leading-relaxed space-y-1 pl-3">
-                        {cleanTextField(formData.teachingGoals).split('\n').filter((l: string) => l.trim()).map((goal: string, i: number) => (
-                          <p key={i}>{i + 1}. {goal}</p>
-                        ))}
-                      </div>
+                  {/* 加载中 */}
+                  {curriculumLoading && (
+                    <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500 mb-3"></div>
+                      <p className="text-sm">正在查询新课标...</p>
                     </div>
                   )}
 
-                  {/* 教学重点 */}
-                  {cleanTextField(formData.keyPoints) && (
-                    <div className="mb-4">
-                      <h2 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                        教学重点
-                      </h2>
-                      <div className="text-xs text-gray-600 leading-relaxed space-y-1 pl-3">
-                        {cleanTextField(formData.keyPoints).split('\n').filter((l: string) => l.trim()).map((point: string, i: number) => (
-                          <p key={i}>{i + 1}. {point}</p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 教学过程 */}
-                  {formData.teachingProcess && (
-                    <div className="mb-4">
-                      <h2 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                        教学过程
-                      </h2>
-                      <div className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap pl-3">
-                        {formData.teachingProcess}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 作业布置 */}
-                  {formData.assignments && (
-                    <div className="mb-4">
-                      <h2 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
-                        作业布置
-                      </h2>
-                      <div className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap pl-3">
-                        {formData.assignments}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 教学总结 */}
-                  {formData.summary && (
-                    <div className="mb-4">
-                      <h2 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
-                        教学总结
-                      </h2>
-                      <div className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap pl-3">
-                        {formData.summary}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 空状态 */}
-                  {!formData.title && !formData.teachingGoals && !formData.teachingProcess && (
-                    <div className="text-center py-10 text-gray-300">
+                  {/* 错误信息 */}
+                  {!curriculumLoading && curriculumError && (
+                    <div className="text-center py-10 text-gray-400">
                       <svg className="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      <p className="text-sm">开始编辑教案，预览将实时更新</p>
+                      <p className="text-sm">{curriculumError}</p>
+                    </div>
+                  )}
+
+                  {/* 未选择学科时的提示 */}
+                  {!curriculumLoading && !curriculumError && !formData.subject && (
+                    <div className="text-center py-12 text-gray-300">
+                      <svg className="w-14 h-14 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                      </svg>
+                      <p className="text-sm mb-1">请选择学科和年级</p>
+                      <p className="text-xs text-gray-300">左侧选择后将显示对应新课标内容</p>
+                    </div>
+                  )}
+
+                  {/* 新课标内容 */}
+                  {!curriculumLoading && !curriculumError && curriculumData && (
+                    <div className="space-y-4">
+                      {/* 学科信息头 */}
+                      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4 border border-indigo-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-bold text-indigo-700">{curriculumData.stage}</span>
+                          <span className="text-xs px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-full">{curriculumData.category}</span>
+                        </div>
+                        <h2 className="text-lg font-bold text-gray-900">{curriculumData.subject}</h2>
+                        {formData.grade && (
+                          <p className="text-xs text-gray-500 mt-1">适用年级：{formData.grade}</p>
+                        )}
+                      </div>
+
+                      {/* 核心素养 */}
+                      {curriculumData.coreQualities.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-100 p-4">
+                          <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                            核心素养
+                          </h3>
+                          <div className="space-y-2">
+                            {curriculumData.coreQualities.map((quality: string, i: number) => (
+                              <div key={i} className="flex items-start gap-2 text-xs text-gray-600 leading-relaxed">
+                                <span className="w-5 h-5 rounded-full bg-indigo-50 text-indigo-500 flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-medium">{i + 1}</span>
+                                <span>{quality}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {curriculumData.coreQualityDetails && (
+                            <p className="text-[11px] text-gray-400 mt-3 italic">{curriculumData.coreQualityDetails.description}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 教学目标要求 */}
+                      {(curriculumData.teachingObjectives.knowledge.length > 0 || curriculumData.teachingObjectives.ability.length > 0 || curriculumData.teachingObjectives.emotion.length > 0) && (
+                        <div className="bg-white rounded-xl border border-gray-100 p-4">
+                          <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                            教学目标要求
+                          </h3>
+                          {curriculumData.teachingObjectives.knowledge.length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-[11px] font-semibold text-blue-600 mb-1">知识与技能</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingObjectives.knowledge.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {curriculumData.teachingObjectives.ability.length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-[11px] font-semibold text-green-600 mb-1">过程与方法</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingObjectives.ability.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {curriculumData.teachingObjectives.emotion.length > 0 && (
+                            <div>
+                              <p className="text-[11px] font-semibold text-amber-600 mb-1">情感态度</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingObjectives.emotion.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 教学过程建议 */}
+                      {(curriculumData.teachingProcess.introduction.length > 0 || curriculumData.teachingProcess.newTeaching.length > 0) && (
+                        <div className="bg-white rounded-xl border border-gray-100 p-4">
+                          <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                            教学过程建议
+                          </h3>
+                          {curriculumData.teachingProcess.introduction.length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-[11px] font-semibold text-emerald-600 mb-1">课堂导入</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingProcess.introduction.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {curriculumData.teachingProcess.newTeaching.length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-[11px] font-semibold text-emerald-600 mb-1">新课讲授</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingProcess.newTeaching.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {curriculumData.teachingProcess.practice.length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-[11px] font-semibold text-emerald-600 mb-1">巩固练习</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingProcess.practice.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {curriculumData.teachingProcess.summary.length > 0 && (
+                            <div>
+                              <p className="text-[11px] font-semibold text-emerald-600 mb-1">课堂小结</p>
+                              <div className="space-y-1">
+                                {curriculumData.teachingProcess.summary.map((item: string, i: number) => (
+                                  <p key={i} className="text-xs text-gray-600 leading-relaxed pl-3">• {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 评价建议 */}
+                      {curriculumData.assessment.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-100 p-4">
+                          <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                            评价建议
+                          </h3>
+                          <div className="flex flex-wrap gap-2">
+                            {curriculumData.assessment.map((item: string, i: number) => (
+                              <span key={i} className="text-xs bg-purple-50 text-purple-600 px-2.5 py-1 rounded-full">{item}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 教学建议 */}
+                      {curriculumData.suggestions.teachingObjectives.length > 0 && (
+                        <div className="bg-white rounded-xl border border-gray-100 p-4">
+                          <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                            教学建议
+                          </h3>
+                          <div className="space-y-2">
+                            {curriculumData.suggestions.teachingObjectives.slice(0, 3).map((item: string, i: number) => (
+                              <div key={i} className="flex items-start gap-2 text-xs text-gray-600 leading-relaxed">
+                                <svg className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                </svg>
+                                <span>{item}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 底部标识 */}
+                      <div className="text-center pt-2 pb-1">
+                        <p className="text-[10px] text-gray-300">依据义务教育课程标准（2022年版）</p>
+                      </div>
                     </div>
                   )}
                 </div>

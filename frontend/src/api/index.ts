@@ -429,6 +429,71 @@ export const aiAPI = {
   },
 };
 
+// 新课标查询 API
+export interface CurriculumStandard {
+  subject: string;
+  grade: string;
+  stage: string;
+  category: string;
+  keywords: string[];
+  coreQualities: string[];
+  coreQualityDetails: {
+    keywords: string[];
+    description: string;
+  } | null;
+  teachingObjectives: {
+    knowledge: string[];
+    ability: string[];
+    emotion: string[];
+  };
+  teachingProcess: {
+    introduction: string[];
+    newTeaching: string[];
+    practice: string[];
+    summary: string[];
+  };
+  assessment: string[];
+  suggestions: {
+    teachingObjectives: string[];
+    teachingContent: string[];
+    teachingProcess: string[];
+    coreQualities: string[];
+  };
+}
+
+export const standardAPI = {
+  getCurriculum: async (subject: string, grade?: string): Promise<CurriculumStandard | null> => {
+    const response = await axiosInstance.get<ApiResponse<CurriculumStandard | null>>('/standard/curriculum', {
+      params: { subject, grade }
+    });
+    return responseHandler(response);
+  },
+
+  getSubjects: async (): Promise<any[]> => {
+    const response = await axiosInstance.get<ApiResponse<any[]>>('/standard/subjects');
+    return responseHandler(response);
+  },
+
+  getGrades: async (): Promise<any> => {
+    const response = await axiosInstance.get<ApiResponse<any>>('/standard/grades');
+    return responseHandler(response);
+  },
+
+  analyze: async (lessonPlan: {
+    title?: string;
+    subject: string;
+    grade?: string;
+    teachingGoals?: string;
+    keyPoints?: string;
+    teachingProcess?: string;
+    homework?: string;
+    summary?: string;
+  }): Promise<any> => {
+    const response = await axiosInstance.post<ApiResponse<any>>('/standard/analyze', lessonPlan);
+    return responseHandler(response);
+  },
+};
+
 // 评论 API
 export interface CommentItem {
   id: number;

@@ -63,6 +63,99 @@ router.post('/analyze', async (req, res) => {
 });
 
 /**
+ * 根据学科和年级查询新课标内容
+ * GET /api/standard/curriculum?subject=语文&grade=一年级
+ */
+router.get('/curriculum', async (req, res) => {
+    try {
+        const { subject, grade } = req.query;
+
+        if (!subject) {
+            return res.status(400).json({
+                success: false,
+                code: 400,
+                message: '请提供学科信息'
+            });
+        }
+
+        // 确定学段
+        let stage = 'primary';
+        const middleGrades = ['七年级', '八年级', '九年级', '初一', '初二', '初三'];
+        const highGrades = ['高一', '高二', '高三'];
+        
+        if (grade) {
+            if (middleGrades.includes(grade)) {
+                stage = 'middle';
+            } else if (highGrades.includes(grade)) {
+                stage = 'high';
+            }
+        }
+
+        // 从 subjectsConfig 中获取对应学科配置
+        const stageConfig = subjectsConfig[stage];
+        if (!stageConfig || !stageConfig.subjects[subject]) {
+            return res.json({
+                success: true,
+                code: 200,
+                data: null,
+                message: `未找到「${subject}」在${stage === 'primary' ? '小学' : stage === 'middle' ? '初中' : '高中'}阶段的新课标配置`
+            });
+        }
+
+        const subjectData = stageConfig.subjects[subject];
+
+        // 获取核心素养信息
+        const coreQualities = curriculumStandards.dimensions.coreQualities.subjects[subject] || null;
+
+        // 获取检测维度中的相关建议
+        const suggestions = curriculumStandards.suggestions || {};
+
+        res.json({
+            success: true,
+            code: 200,
+            data: {
+                subject,
+                grade: grade || '未指定',
+                stage: stage === 'primary' ? '小学' : stage === 'middle' ? '初中' : '高中',
+                category: subjectData.category || '',
+                keywords: subjectData.keywords || [],
+                coreQualities: subjectData.coreQualities || [],
+                coreQualityDetails: coreQualities ? {
+                    keywords: coreQualities.keywords || [],
+                    description: coreQualities.description || ''
+                } : null,
+                teachingObjectives: subjectData.teachingObjectives || {
+                    knowledge: [],
+                    ability: [],
+                    emotion: []
+                },
+                teachingProcess: subjectData.teachingProcess || {
+                    introduction: [],
+                    newTeaching: [],
+                    practice: [],
+                    summary: []
+                },
+                assessment: subjectData.assessment || [],
+                suggestions: {
+                    teachingObjectives: suggestions.teachingObjectives || [],
+                    teachingContent: suggestions.teachingContent || [],
+                    teachingProcess: suggestions.teachingProcess || [],
+                    coreQualities: suggestions.coreQualities || []
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('查询新课标内容错误:', error);
+        res.status(500).json({
+            success: false,
+            code: 500,
+            message: '查询失败: ' + error.message
+        });
+    }
+});
+
+/**
  * 获取支持的学科列表
  * GET /api/standard/subjects
  */
