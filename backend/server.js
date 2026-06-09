@@ -189,6 +189,9 @@ try {
 
     app.use('/api/onlyoffice', require('./src/routes/onlyoffice'));
     console.log('✅ ONLYOFFICE路由已加载: /api/onlyoffice');
+
+    app.use('/api/knowledge-base', require('./src/routes/knowledgeBase'));
+    console.log('✅ 知识库路由已加载: /api/knowledge-base');
 } catch (error) {
     console.log('⚠️ 部分路由加载失败:', error.message);
 }

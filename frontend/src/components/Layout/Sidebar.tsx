@@ -32,6 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onClose, isMobile = f
       ]
     },
     { path: '/portfolios', label: '作品集', icon: 'grid' },
+    { path: '/knowledge-base', label: '新课标知识库', icon: 'academic' },
     { path: '/profile', label: '个人中心', icon: 'user' },
   ];
 
@@ -77,6 +78,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onClose, isMobile = f
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
       ),
+      'academic': (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222" />
+        </svg>
+      ),
     };
     return icons[iconName];
   };
@@ -99,7 +107,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onClose, isMobile = f
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between h-[70px] border-b border-pink-700 px-4">
+        <div className="flex items-center justify-between h-[64px] border-b border-pink-700 px-4">
           <div className="flex items-center gap-3">
             <img
               src="/logo.jpg"
@@ -185,7 +193,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onClose, isMobile = f
   // 桌面端：固定侧边栏
   return (
     <aside className="fixed left-0 top-0 h-screen w-[220px] bg-pink-900 flex flex-col z-50">
-      <div className="flex items-center justify-start h-[100px] border-b border-pink-700 px-4">
+      <div className="flex items-center justify-start h-[64px] border-b border-pink-700 px-4">
         <div className="flex items-center gap-4">
           <img
             src="/logo.jpg"

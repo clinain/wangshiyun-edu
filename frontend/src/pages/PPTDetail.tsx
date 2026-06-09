@@ -92,67 +92,9 @@ const PPTDetail: React.FC = () => {
     }
   };
 
-  const handleEditPpt = async () => {
+  const handleEditPpt = () => {
     if (!pptData) return;
-    try {
-      const data = await pptAPI.detail(pptData.id);
-      const pages = data.content?.pages || [];
-
-      const PptxGenJS = (await import('pptxgenjs')).default;
-      const pptx = new PptxGenJS();
-      pptx.title = data.title || pptData.title;
-
-      pages.forEach((p: any) => {
-        const slide = pptx.addSlide();
-        const content = p.content || {};
-        if (p.type === 'cover') {
-          slide.background = { color: '1E40AF' };
-          slide.addText(content.mainTitle || p.title || '', { x: 1, y: 2.0, w: 11.33, h: 1.5, fontSize: 36, color: 'FFFFFF', bold: true, align: 'center' });
-          if (content.subtitle) slide.addText(content.subtitle, { x: 1, y: 3.5, w: 11.33, h: 0.8, fontSize: 20, color: 'BFDBFE', align: 'center' });
-          if (content.mainContent) slide.addText(content.mainContent, { x: 1, y: 4.8, w: 11.33, h: 0.5, fontSize: 14, color: '93C5FD', align: 'center' });
-        } else if (p.type === 'end') {
-          slide.background = { color: '1F2937' };
-          slide.addText(content.mainText || p.title || '', { x: 1, y: 2.5, w: 11.33, h: 1.5, fontSize: 36, color: 'FFFFFF', bold: true, align: 'center' });
-          if (content.subText) slide.addText(content.subText, { x: 1, y: 4.0, w: 11.33, h: 0.8, fontSize: 18, color: 'D1D5DB', align: 'center' });
-        } else if (content.items && Array.isArray(content.items)) {
-          slide.background = { color: 'FFFFFF' };
-          slide.addText(p.title || '', { x: 0.8, y: 0.2, w: 11.73, h: 0.9, fontSize: 24, color: '1E40AF', bold: true });
-          const listItems = content.items.map((item: any, idx: number) => ({
-            text: `  ${item.number || idx + 1}.  ${typeof item === 'string' ? item : (item.text || String(item))}`,
-            options: { fontSize: 14, color: '374151', paraSpaceAfter: 6 }
-          }));
-          slide.addText(listItems, { x: 0.8, y: 1.3, w: 11.73, h: 5.5, valign: 'top', lineSpacingMultiple: 1.5 });
-        } else {
-          slide.background = { color: 'FFFFFF' };
-          slide.addText(p.title || '', { x: 0.8, y: 0.2, w: 11.73, h: 0.9, fontSize: 24, color: '1E40AF', bold: true });
-          const bodyText = content.mainContent || content.text || content.mainText || '';
-          if (bodyText) slide.addText(bodyText, { x: 0.8, y: 1.3, w: 11.73, h: 5.5, fontSize: 14, color: '374151', valign: 'top', lineSpacingMultiple: 1.5 });
-        }
-        if (p.notes) slide.addNotes(p.notes);
-      });
-
-      const buffer = await pptx.write({ outputType: 'arraybuffer' });
-      const blob = new Blob([buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
-      const file = new File([blob], `${data.title || pptData.title}.pptx`, { type: blob.type });
-      const formData = new FormData();
-      formData.append('file', file);
-      const token = localStorage.getItem('token');
-      const uploadRes = await fetch('/api/onlyoffice/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
-      });
-      const uploadResult = await uploadRes.json();
-      if (uploadResult.success && uploadResult.data?.url) {
-        // 构建 OnlyOffice 私有化部署编辑器 URL 并跳转
-        const onlyOfficeUrl = `${window.location.protocol}//${window.location.hostname}:8080/web-apps/apps/presentationeditor/main/index.html?lang=zh-CN&customer=AI教学助手&fileType=pptx&key=${encodeURIComponent(`ppt-${pptData.id}-${Date.now()}`)}&title=${encodeURIComponent(data.title || pptData.title)}&url=${encodeURIComponent(uploadResult.data.url)}&mode=edit`;
-        window.open(onlyOfficeUrl, '_blank');
-      } else {
-        navigate(`/ppt/${pptData.id}/edit`);
-      }
-    } catch (err) {
-      navigate(`/ppt/${pptData.id}/edit`);
-    }
+    navigate(`/ppt/${pptData.id}/edit`);
   };
 
   const handleExportPptx = () => {

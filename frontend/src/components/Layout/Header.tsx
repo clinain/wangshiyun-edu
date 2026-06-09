@@ -22,7 +22,7 @@ const Header: React.FC<HeaderProps> = ({ title, breadcrumbs, onToggleSidebar, is
   };
 
   return (
-    <header className={`${isMobile ? 'h-[60px]' : 'h-[100px]'} bg-pink-800 border-b border-pink-700 flex items-center justify-between ${isMobile ? 'px-4' : 'px-6'} sticky top-0 z-30`}>
+    <header className={`${isMobile ? 'h-[48px]' : 'h-[64px]'} bg-pink-800 border-b border-pink-700 flex items-center justify-between ${isMobile ? 'px-4' : 'px-6'} sticky top-0 z-30`}>
       <div className="flex items-center gap-3">
         {/* 移动端汉堡菜单按钮 */}
         {isMobile && (

@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Layout from '@/components/Layout/Layout';
 import { knowledgeBaseAPI, KnowledgeBaseSubject, KnowledgeBaseSubjectDetail, KnowledgeBaseSearchResult, KnowledgeBaseCategory, KnowledgeBaseStats } from '@/api';
 
 type ViewMode = 'grid' | 'search' | 'detail';
 
 const KnowledgeBase: React.FC = () => {
+  const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [subjects, setSubjects] = useState<KnowledgeBaseSubject[]>([]);
   const [categories, setCategories] = useState<KnowledgeBaseCategory[]>([]);
@@ -108,53 +111,16 @@ const KnowledgeBase: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 顶部标题栏 */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              {viewMode !== 'grid' && (
-                <button
-                  onClick={handleBack}
-                  className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                </button>
-              )}
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">📚 新课标知识库</h1>
-                <p className="text-xs text-gray-500">义务教育课程标准（2022年版）</p>
-              </div>
-            </div>
-            {/* 搜索框 */}
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchKeyword}
-                  onChange={(e) => setSearchKeyword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  placeholder="搜索知识库..."
-                  className="w-64 px-4 py-2 pl-10 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <button
-                onClick={handleSearch}
-                className="px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors"
-              >
-                搜索
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
+    <Layout
+      title="📚 新课标知识库"
+      subtitle="义务教育课程标准（2022年版）"
+      breadcrumbs={[
+        { label: '首页', path: '/dashboard' },
+        { label: '新课标知识库' },
+        ...(viewMode === 'detail' && selectedSubject ? [{ label: selectedSubject.name }] : []),
+        ...(viewMode === 'search' ? [{ label: `搜索: ${searchKeyword}` }] : []),
+      ]}
+    >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -169,31 +135,42 @@ const KnowledgeBase: React.FC = () => {
             {stats && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-white rounded-xl p-4 border border-gray-200">
-                  <div className="text-2xl font-bold text-blue-600">{stats.totalSubjects}</div>
+                  <div className="text-2xl font-bold text-primary-600">{stats.totalSubjects}</div>
                   <div className="text-sm text-gray-500">学科总数</div>
                 </div>
                 <div className="bg-white rounded-xl p-4 border border-gray-200">
-                  <div className="text-2xl font-bold text-green-600">{stats.totalSections}</div>
+                  <div className="text-2xl font-bold text-primary-500">{stats.totalSections}</div>
                   <div className="text-sm text-gray-500">知识章节</div>
                 </div>
                 <div className="bg-white rounded-xl p-4 border border-gray-200">
-                  <div className="text-2xl font-bold text-purple-600">{stats.totalKeywords}</div>
+                  <div className="text-2xl font-bold text-primary-700">{stats.totalKeywords}</div>
                   <div className="text-sm text-gray-500">关键词</div>
                 </div>
                 <div className="bg-white rounded-xl p-4 border border-gray-200">
-                  <div className="text-2xl font-bold text-orange-600">{Object.keys(stats.categories).length}</div>
+                  <div className="text-2xl font-bold text-primary-400">{Object.keys(stats.categories).length}</div>
                   <div className="text-sm text-gray-500">学科分类</div>
                 </div>
               </div>
             )}
 
-            {/* 分类筛选 */}
-            <div className="flex flex-wrap gap-2 mb-6">
+            {/* 分类筛选 + 搜索框 */}
+            <div className="flex flex-wrap items-center gap-2 mb-6">
+              {viewMode !== 'grid' && (
+                <button
+                  onClick={handleBack}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-full border border-gray-300 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  返回列表
+                </button>
+              )}
               <button
                 onClick={() => setSelectedCategory('')}
                 className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
                   !selectedCategory
-                    ? 'bg-blue-500 text-white border-blue-500'
+                    ? 'bg-primary-500 text-white border-primary-500'
                     : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                 }`}
               >
@@ -205,19 +182,41 @@ const KnowledgeBase: React.FC = () => {
                   onClick={() => setSelectedCategory(cat.id)}
                   className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
                     selectedCategory === cat.id
-                      ? 'bg-blue-500 text-white border-blue-500'
+                      ? 'bg-primary-500 text-white border-primary-500'
                       : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                   }`}
                 >
                   {cat.name}
                 </button>
               ))}
+              {/* 搜索框 */}
+              <div className="ml-auto flex items-center gap-2">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={searchKeyword}
+                    onChange={(e) => setSearchKeyword(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    placeholder="搜索知识库..."
+                    className="w-48 px-3 py-1.5 pl-8 text-sm border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent"
+                  />
+                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <button
+                  onClick={handleSearch}
+                  className="px-3 py-1.5 bg-primary-500 text-white text-sm font-medium rounded-full hover:bg-primary-600 transition-colors"
+                >
+                  搜索
+                </button>
+              </div>
             </div>
 
             {/* 学科卡片网格 */}
             {loading ? (
               <div className="flex items-center justify-center py-20">
-                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-500"></div>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -225,12 +224,12 @@ const KnowledgeBase: React.FC = () => {
                   <div
                     key={subject.id}
                     onClick={() => loadSubjectDetail(subject.id)}
-                    className="bg-white rounded-xl border border-gray-200 p-5 cursor-pointer hover:shadow-lg hover:border-blue-300 transition-all duration-200 group"
+                    className="bg-white rounded-xl border border-gray-200 p-5 cursor-pointer hover:shadow-lg hover:border-primary-300 transition-all duration-200 group"
                   >
                     <div className="flex items-start gap-3">
                       <span className="text-3xl">{getSubjectIcon(subject.name)}</span>
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
+                        <h3 className="font-semibold text-gray-900 group-hover:text-primary-600 transition-colors">
                           {subject.name}
                         </h3>
                         <span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full border ${getCategoryColor(subject.category)}`}>
@@ -282,7 +281,7 @@ const KnowledgeBase: React.FC = () => {
                       <span className="text-2xl">{getSubjectIcon(result.name)}</span>
                       <div>
                         <h3
-                          className="font-semibold text-gray-900 cursor-pointer hover:text-blue-600"
+                          className="font-semibold text-gray-900 cursor-pointer hover:text-primary-600"
                           onClick={() => loadSubjectDetail(result.id)}
                         >
                           {result.fullName || result.name}
@@ -297,7 +296,7 @@ const KnowledgeBase: React.FC = () => {
                         <div key={idx} className="p-3 bg-gray-50 rounded-lg">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-sm font-medium text-gray-700">{section.title}</span>
-                            <span className="px-1.5 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
+                            <span className="px-1.5 py-0.5 text-xs bg-primary-100 text-primary-700 rounded">
                               {section.matchType === 'title' ? '标题匹配' : section.matchType === 'keyword' ? '关键词匹配' : '内容匹配'}
                             </span>
                           </div>
@@ -317,6 +316,17 @@ const KnowledgeBase: React.FC = () => {
           <div>
             {/* 学科头部信息 */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <button
+                  onClick={handleBack}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  返回列表
+                </button>
+              </div>
               <div className="flex items-center gap-4">
                 <span className="text-5xl">{getSubjectIcon(selectedSubject.name)}</span>
                 <div>
@@ -386,7 +396,7 @@ const KnowledgeBase: React.FC = () => {
           </div>
         )}
       </div>
-    </div>
+    </Layout>
   );
 };
 

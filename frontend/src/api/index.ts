@@ -550,6 +550,99 @@ export const commentAPI = {
   },
 };
 
+// ========== 知识库 API ==========
+export interface KnowledgeBaseSubject {
+  id: string;
+  name: string;
+  category: string;
+  description?: string;
+  icon?: string;
+}
+
+export interface KnowledgeBaseSubjectDetail extends KnowledgeBaseSubject {
+  coreCompetencies?: any[];
+  sections?: any[];
+  curriculumObjectives?: any[];
+}
+
+export interface KnowledgeBaseSearchResult {
+  subjectId: string;
+  subjectName: string;
+  sectionId?: string;
+  sectionTitle?: string;
+  content: string;
+  keyword: string;
+}
+
+export interface KnowledgeBaseCategory {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface KnowledgeBaseStats {
+  totalSubjects: number;
+  totalCategories: number;
+  totalSections: number;
+}
+
+export const knowledgeBaseAPI = {
+  // 获取知识库概览
+  getIndex: async (): Promise<{ subjects: KnowledgeBaseSubject[]; stats: KnowledgeBaseStats }> => {
+    const response = await axiosInstance.get('/knowledge-base');
+    return responseHandler(response);
+  },
+
+  // 获取学科列表
+  getSubjects: async (category?: string): Promise<KnowledgeBaseSubject[]> => {
+    const params = category ? { category } : {};
+    const response = await axiosInstance.get('/knowledge-base/subjects', { params });
+    return responseHandler(response);
+  },
+
+  // 获取学科详情
+  getSubjectDetail: async (id: string): Promise<KnowledgeBaseSubjectDetail> => {
+    const response = await axiosInstance.get(`/knowledge-base/subjects/${id}`);
+    return responseHandler(response);
+  },
+
+  // 获取学科章节
+  getSection: async (subjectId: string, sectionId: string): Promise<any> => {
+    const response = await axiosInstance.get(`/knowledge-base/subjects/${subjectId}/sections/${sectionId}`);
+    return responseHandler(response);
+  },
+
+  // 获取核心素养
+  getCompetencies: async (id: string): Promise<any[]> => {
+    const response = await axiosInstance.get(`/knowledge-base/subjects/${id}/competencies`);
+    return responseHandler(response);
+  },
+
+  // 获取核心素养概览
+  getCompetenciesOverview: async (): Promise<any[]> => {
+    const response = await axiosInstance.get('/knowledge-base/competencies-overview');
+    return responseHandler(response);
+  },
+
+  // 获取分类列表
+  getCategories: async (): Promise<KnowledgeBaseCategory[]> => {
+    const response = await axiosInstance.get('/knowledge-base/categories');
+    return responseHandler(response);
+  },
+
+  // 搜索知识库
+  search: async (keyword: string): Promise<{ results: KnowledgeBaseSearchResult[] }> => {
+    const response = await axiosInstance.get('/knowledge-base/search', { params: { keyword } });
+    return responseHandler(response);
+  },
+
+  // 获取统计信息
+  getStats: async (): Promise<KnowledgeBaseStats> => {
+    const response = await axiosInstance.get('/knowledge-base/stats');
+    return responseHandler(response);
+  },
+};
+
 export default axiosInstance;
 
 

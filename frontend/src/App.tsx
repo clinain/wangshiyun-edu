@@ -21,6 +21,7 @@ import PPT from '@/pages/PPT';
 import PPTDetail from '@/pages/PPTDetail';
 import PPTEdit from '@/pages/PPTEdit';
 import Profile from '@/pages/Profile';
+import KnowledgeBase from '@/pages/KnowledgeBase';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAuth();
@@ -180,6 +181,14 @@ const App: React.FC = () => {
             element={
               <ProtectedRoute>
                 <PPTEdit />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/knowledge-base"
+            element={
+              <ProtectedRoute>
+                <KnowledgeBase />
               </ProtectedRoute>
             }
           />
