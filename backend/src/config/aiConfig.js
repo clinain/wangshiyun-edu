@@ -8,7 +8,7 @@
 const axios = require('axios');
 
 const ZHIPU_API_URL = process.env.ZHIPU_API_URL || 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
-const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || '18f4bc4ed69b4a3a8305085ea235cecf.vzCP1QZcaXnx6WrS';
+const ZHIPU_API_KEY = process.env.ZHIPU_API_KEY || '';
 const ZHIPU_MODEL = process.env.ZHIPU_MODEL || 'glm-4-flash';
 
 const aiConfig = {

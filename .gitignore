@@ -20,6 +20,9 @@ out/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
+backend/.env.production
+frontend/.env.production
 
 # 上传的用户文件（数据库、文档、视频等）
 backend/uploads/
