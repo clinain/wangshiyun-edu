@@ -7,6 +7,23 @@ const Resource = require('../models/Resource');
 const Favorite = require('../models/Favorite');
 const { getFileUrl, getResourceType } = require('../middleware/upload');
 
+const normalizeDownloadUrl = (fileUrl) => {
+    if (!fileUrl) return '';
+
+    try {
+        const parsed = new URL(fileUrl);
+        if (parsed.pathname.startsWith('/uploads/')) {
+            return parsed.pathname;
+        }
+    } catch (error) {
+        if (fileUrl.startsWith('/uploads/')) {
+            return fileUrl;
+        }
+    }
+
+    return fileUrl;
+};
+
 /**
  * 上传资源
  * POST /api/resources/upload
@@ -35,6 +52,20 @@ const uploadResource = async (req, res) => {
             });
         }
 
+        // 检查同名资源是否已存在
+        const db = require('../config/database');
+        const existingResource = db.query(
+            'SELECT id FROM resources WHERE title = ? AND uploader_id = ? LIMIT 1',
+            [title, userId]
+        );
+        if (existingResource && existingResource.length > 0) {
+            return res.status(400).json({
+                success: false,
+                code: 400,
+                message: '已存在同名资源，请修改标题后重新上传'
+            });
+        }
+
         // 获取文件信息
         const file = req.file;
         const fileUrl = getFileUrl(req, file.filename, file.mimetype);
@@ -53,7 +84,14 @@ const uploadResource = async (req, res) => {
             'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
             'video/mp4': 'mp4',
             'video/mpeg': 'mpeg',
-            'video/webm': 'webm'
+            'video/webm': 'webm',
+            'audio/mpeg': 'mp3',
+            'audio/wav': 'wav',
+            'audio/ogg': 'ogg',
+            'audio/mp4': 'm4a',
+            'audio/x-m4a': 'm4a',
+            'audio/flac': 'flac',
+            'audio/aac': 'aac',
         };
         const fileFormat = FORMAT_MAP[file.mimetype] || file.mimetype.substring(0, 20);
 
@@ -104,7 +142,7 @@ const uploadResource = async (req, res) => {
  */
 const getResourceList = async (req, res) => {
     try {
-        const { page = 1, pageSize = 10, type, category, keyword, subject, grade } = req.query;
+        const { page = 1, pageSize = 10, type, category, keyword, subject, grade, sortBy, sortOrder } = req.query;
         const userId = req.user?.id;
 
         const result = await Resource.findAll({
@@ -114,7 +152,9 @@ const getResourceList = async (req, res) => {
             category,
             keyword,
             subject,
-            grade
+            grade,
+            sortBy,
+            sortOrder
         });
 
         const resources = await Promise.all(result.resources.map(async (resource) => {
@@ -136,6 +176,8 @@ const getResourceList = async (req, res) => {
                 tags: resource.tags,
                 downloadCount: resource.downloadCount || resource.download_count || 0,
                 favoriteCount: resource.favoriteCount || resource.favorite_count || 0,
+                viewCount: resource.viewCount || resource.view_count || 0,
+                isPublic: resource.isPublic,
                 isFavorite,
                 fileName,
                 createdAt: resource.createdAt || resource.created_at
@@ -208,6 +250,7 @@ const getResourceDetail = async (req, res) => {
 /**
  * 下载资源
  * GET /api/resources/:id/download
+ * 流式传输文件，支持断点续传
  */
 const downloadResource = async (req, res) => {
     try {
@@ -223,11 +266,81 @@ const downloadResource = async (req, res) => {
             });
         }
 
+        const userId = req.user?.id;
+        if (!resource.isPublic && userId !== resource.uploaderId) {
+            return res.status(403).json({
+                success: false,
+                code: 403,
+                message: '无权下载此资源'
+            });
+        }
+
         // 增加下载次数
         await Resource.incrementDownloads(id);
 
-        // 重定向到文件URL
-        res.redirect(resource.fileUrl);
+        // 获取文件的物理路径
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = normalizeDownloadUrl(resource.fileUrl);
+
+        // 构建绝对路径
+        const absolutePath = path.join(__dirname, '../..', filePath);
+
+        if (!fs.existsSync(absolutePath)) {
+            return res.status(404).json({
+                success: false,
+                code: 404,
+                message: '文件不存在'
+            });
+        }
+
+        // 获取文件统计信息
+        const stat = fs.statSync(absolutePath);
+
+        // 根据文件扩展名设置 Content-Type
+        const mimeTypes = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.txt': 'text/plain; charset=utf-8',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.mp4': 'video/mp4',
+            '.webm': 'video/webm',
+            '.mpeg': 'video/mpeg',
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav',
+            '.ogg': 'audio/ogg',
+            '.m4a': 'audio/mp4',
+            '.flac': 'audio/flac',
+            '.aac': 'audio/aac',
+            '.json': 'application/json',
+        };
+
+        const ext = path.extname(absolutePath).toLowerCase();
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+        // 从原始文件名或标题生成下载文件名
+        const downloadName = resource.title
+            ? `${resource.title}${ext}`
+            : path.basename(absolutePath);
+
+        // 设置响应头
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Length', stat.size);
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
+        res.setHeader('Accept-Ranges', 'bytes');
+
+        // 流式传输文件
+        const stream = fs.createReadStream(absolutePath);
+        stream.pipe(res);
 
     } catch (error) {
         console.error('下载资源错误:', error);
@@ -235,6 +348,172 @@ const downloadResource = async (req, res) => {
             success: false,
             code: 500,
             message: '下载失败'
+        });
+    }
+};
+
+/**
+ * 预览资源
+ * GET /api/resources/:id/preview
+ * 流式传输文件，支持在线预览（Content-Disposition: inline）
+ */
+const previewResource = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const resource = await Resource.findById(id);
+
+        if (!resource) {
+            return res.status(404).json({
+                success: false,
+                code: 404,
+                message: '资源不存在'
+            });
+        }
+
+        const userId = req.user?.id;
+        if (!resource.isPublic && userId !== resource.uploaderId) {
+            return res.status(403).json({
+                success: false,
+                code: 403,
+                message: '无权预览此资源'
+            });
+        }
+
+        // 获取文件的物理路径
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = normalizeDownloadUrl(resource.fileUrl);
+        const absolutePath = path.join(__dirname, '../..', filePath);
+
+        if (!fs.existsSync(absolutePath)) {
+            return res.status(404).json({
+                success: false,
+                code: 404,
+                message: '文件不存在'
+            });
+        }
+
+        // 获取文件统计信息
+        const stat = fs.statSync(absolutePath);
+
+        // 根据文件扩展名设置 Content-Type
+        const mimeTypes = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.txt': 'text/plain; charset=utf-8',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.svg': 'image/svg+xml',
+            '.bmp': 'image/bmp',
+            '.mp4': 'video/mp4',
+            '.webm': 'video/webm',
+            '.mpeg': 'video/mpeg',
+            '.avi': 'video/avi',
+            '.mov': 'video/quicktime',
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav',
+            '.ogg': 'audio/ogg',
+            '.m4a': 'audio/mp4',
+            '.flac': 'audio/flac',
+            '.aac': 'audio/aac',
+            '.json': 'application/json',
+        };
+
+        const ext = path.extname(absolutePath).toLowerCase();
+        const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+        // 设置响应头 - inline 用于在线预览
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Length', stat.size);
+        res.setHeader('Content-Disposition', 'inline');
+        res.setHeader('Accept-Ranges', 'bytes');
+        // 允许 iframe 嵌入
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+        // 禁止缓存敏感文件
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+        // 流式传输文件
+        const stream = fs.createReadStream(absolutePath);
+        stream.pipe(res);
+
+    } catch (error) {
+        console.error('预览资源错误:', error);
+        res.status(500).json({
+            success: false,
+            code: 500,
+            message: '预览失败'
+        });
+    }
+};
+
+/**
+ * 预览文本资源（返回纯文本内容）
+ * GET /api/resources/:id/preview-text
+ */
+const previewTextResource = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const resource = await Resource.findById(id);
+
+        if (!resource) {
+            return res.status(404).json({
+                success: false,
+                code: 404,
+                message: '资源不存在'
+            });
+        }
+
+        const userId = req.user?.id;
+        if (!resource.isPublic && userId !== resource.uploaderId) {
+            return res.status(403).json({
+                success: false,
+                code: 403,
+                message: '无权预览此资源'
+            });
+        }
+
+        // 获取文件的物理路径
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = normalizeDownloadUrl(resource.fileUrl);
+        const absolutePath = path.join(__dirname, '../..', filePath);
+
+        if (!fs.existsSync(absolutePath)) {
+            return res.status(404).json({
+                success: false,
+                code: 404,
+                message: '文件不存在'
+            });
+        }
+
+        // 读取文本内容（限制最大 1MB）
+        const content = fs.readFileSync(absolutePath, 'utf-8').substring(0, 1024 * 1024);
+
+        res.json({
+            success: true,
+            data: {
+                content,
+                title: resource.title,
+                fileFormat: resource.fileFormat
+            }
+        });
+
+    } catch (error) {
+        console.error('预览文本资源错误:', error);
+        res.status(500).json({
+            success: false,
+            code: 500,
+            message: '预览失败'
         });
     }
 };
@@ -408,16 +687,61 @@ const getMyResources = async (req, res) => {
                 tags: resource.tags,
                 downloadCount: resource.downloadCount || resource.download_count || 0,
                 favoriteCount: resource.favoriteCount || resource.favorite_count || 0,
+                isPublic: resource.isPublic,
                 isFavorite: false,
                 fileName,
                 createdAt: resource.createdAt || resource.created_at
             };
         });
 
+        // 只查询用户创建的作品集
+        const db = require('../config/database');
+        const portfolios = await db.query(`
+            SELECT p.*, u.name as author_name
+            FROM portfolios p
+            LEFT JOIN users u ON p.user_id = u.id
+            WHERE p.user_id = ? AND p.is_public = 1
+            ORDER BY p.created_at DESC
+        `, [userId]);
+
+        // JSON 解析和字段名转换（snake_case -> camelCase）
+        const processedPortfolios = portfolios.map(p => ({
+            id: p.id,
+            userId: p.user_id,
+            name: p.name,
+            description: p.description,
+            subject: p.subject,
+            grade: p.grade,
+            category: p.category,
+            coverUrl: p.cover_url,
+            lessonIds: (() => {
+                try { return p.lesson_ids ? JSON.parse(p.lesson_ids) : []; }
+                catch { return []; }
+            })(),
+            pptIds: (() => {
+                try { return p.ppt_ids ? JSON.parse(p.ppt_ids) : []; }
+                catch { return []; }
+            })(),
+            isPublic: p.is_public === 1,
+            shareCount: p.share_count,
+            viewCount: p.view_count,
+            authorName: p.author_name,
+            createdAt: p.created_at,
+            updatedAt: p.updated_at
+        }));
+
+        // 如果有关键词筛选，对作品集也做简单过滤
+        const filteredPortfolios = keyword
+            ? processedPortfolios.filter(p =>
+                (p.name && p.name.includes(keyword)) ||
+                (p.description && p.description.includes(keyword))
+              )
+            : processedPortfolios;
+
         res.json({
             success: true,
             message: '获取我的资源列表成功',
-            data: { resources },
+            data: { resources, portfolios: filteredPortfolios },
             pagination: result.pagination
         });
 
@@ -530,15 +854,58 @@ const copyToMyResources = async (req, res) => {
     }
 };
 
+/**
+ * 统一获取所有资源列表（教案、PPT、作品集、上传资源）
+ * GET /api/resources/all
+ */
+const getAllResources = async (req, res) => {
+    try {
+        const { page = 1, pageSize = 20, keyword, type, fileFormat, subject, grade, sortBy, sortOrder } = req.query;
+
+        // 解析 fileFormat：支持逗号分隔的多值（如 "doc,docx"）
+        const parsedFileFormat = fileFormat ? fileFormat.split(',').map(f => f.trim().toLowerCase()).filter(Boolean) : null;
+
+        const result = await Resource.findAllUnified({
+            page: parseInt(page),
+            pageSize: parseInt(pageSize),
+            keyword,
+            type,
+            fileFormat: parsedFileFormat,
+            subject,
+            grade,
+            sortBy,
+            sortOrder
+        });
+
+        res.json({
+            success: true,
+            message: '获取统一资源列表成功',
+            data: { items: result.items },
+            pagination: result.pagination
+        });
+
+    } catch (error) {
+        console.error('获取统一资源列表错误:', error);
+        res.status(500).json({
+            success: false,
+            code: 500,
+            message: '服务器内部错误'
+        });
+    }
+};
+
 module.exports = {
     uploadResource,
     getResourceList,
     getResourceDetail,
     downloadResource,
+    previewResource,
+    previewTextResource,
     toggleFavorite,
     togglePublic,
     copyToMyResources,
     getMyFavorites,
     getMyResources,
-    deleteResource
+    deleteResource,
+    getAllResources
 };

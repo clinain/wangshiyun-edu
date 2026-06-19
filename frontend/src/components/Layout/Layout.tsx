@@ -13,9 +13,10 @@ interface LayoutProps {
   breadcrumbs?: BreadcrumbItem[];
   children: React.ReactNode;
   hideSidebar?: boolean;
+  noScroll?: boolean;
 }
 
-const Layout: React.FC<LayoutProps> = ({ title, subtitle, breadcrumbs, children, hideSidebar = false }) => {
+const Layout: React.FC<LayoutProps> = ({ title, subtitle, breadcrumbs, children, hideSidebar = false, noScroll = false }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -40,7 +41,7 @@ const Layout: React.FC<LayoutProps> = ({ title, subtitle, breadcrumbs, children,
   };
 
   return (
-    <div className="min-h-screen bg-bg-light">
+    <div className="h-screen overflow-hidden bg-bg-light">
       {!hideSidebar && (
         <>
           {/* 移动端遮罩层 */}
@@ -57,7 +58,7 @@ const Layout: React.FC<LayoutProps> = ({ title, subtitle, breadcrumbs, children,
           />
         </>
       )}
-      <div className={hideSidebar ? '' : 'md:ml-[220px]'}>
+      <div className={`${hideSidebar ? '' : 'md:ml-[220px]'} flex h-screen min-w-0 flex-col overflow-hidden`}>
         <Header
           title={title}
           subtitle={subtitle}
@@ -66,7 +67,7 @@ const Layout: React.FC<LayoutProps> = ({ title, subtitle, breadcrumbs, children,
           sidebarCollapsed={sidebarOpen}
           isMobile={isMobile}
         />
-        <main className="p-4 md:p-6">
+        <main className={`${noScroll ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain'} min-h-0 min-w-0 flex-1 max-w-full overflow-x-hidden p-3 sm:p-4 md:p-6`}>
           {children}
         </main>
       </div>

@@ -68,3 +68,13 @@ docker-compose.override.yml
 # 临时文件
 tmp/
 temp/
+
+# Runtime data and local deployment state
+backend/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+run/
+*.pid
+*.pid.lock
+*.tmp

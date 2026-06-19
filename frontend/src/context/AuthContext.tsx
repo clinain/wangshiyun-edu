@@ -6,8 +6,8 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  login: (phone: string, password: string) => Promise<void>;
-  register: (phone: string, password: string) => Promise<void>;
+  login: (loginId: string, password?: string, verificationCode?: string) => Promise<void>;
+  register: (email: string, password: string, verificationCode: string) => Promise<void>;
   logout: () => void;
   updateUser: (user: User) => void;
 }
@@ -20,19 +20,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+    try {
+      const storedToken = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
+      
+      if (storedToken && storedUser) {
+        setToken(storedToken);
+        try {
+          const parsedUser = JSON.parse(storedUser);
+          if (parsedUser && typeof parsedUser === 'object') {
+            setUser(parsedUser);
+          } else {
+            // 用户数据格式无效，清除存储
+            localStorage.removeItem('user');
+            localStorage.removeItem('token');
+            setToken(null);
+          }
+        } catch {
+          // JSON 解析失败，清除损坏的数据
+          localStorage.removeItem('user');
+          localStorage.removeItem('token');
+          setToken(null);
+        }
+      }
+    } catch {
+      // localStorage 访问异常，清除所有认证数据
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
     }
     setIsLoading(false);
   }, []);
 
-  const login = useCallback(async (loginId: string, password: string) => {
+  const login = useCallback(async (loginId: string, password?: string, verificationCode?: string) => {
     try {
-      const result = await authAPI.login({ login: loginId, password });
+      const result = await authAPI.login({ login: loginId, password, verificationCode });
       setUser(result.user);
       setToken(result.token);
       localStorage.setItem('token', result.token);
@@ -42,9 +63,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
-  const register = useCallback(async (phone: string, password: string) => {
+  const register = useCallback(async (email: string, password: string, verificationCode: string) => {
     try {
-      const result = await authAPI.register({ phone, password });
+      const result = await authAPI.register({ email, password, verificationCode });
       setUser(result.user);
       setToken(result.token);
       localStorage.setItem('token', result.token);

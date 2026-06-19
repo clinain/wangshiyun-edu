@@ -3,16 +3,19 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
+import GeneratingProgressModal from '@/components/GeneratingProgressModal';
 import { lessonAPI, aiAPI, standardAPI } from '@/api';
 import type { Lesson } from '@/types';
 import type { CurriculumStandard } from '@/api';
+import { parseTeachingGoals, teachingGoalsToText, textToTeachingGoals } from '@/utils/teachingGoalsHelper';
+import type { TeachingGoalsData } from '@/types';
 
 const primarySubjects = ['语文', '数学', '英语', '道德与法治', '科学', '信息科技', '音乐', '美术', '体育与健康', '劳动', '书法', '综合实践活动', '心理健康'];
 const middleSubjects = ['语文', '数学', '英语', '道德与法治', '历史', '地理', '物理', '化学', '生物学', '信息技术', '音乐', '美术', '体育与健康', '劳动', '心理健康', '综合实践活动'];
 const highSubjects = ['语文', '数学', '英语', '物理', '化学', '生物学', '历史', '地理', '思想政治', '通用技术', '信息技术', '音乐', '美术', '体育与健康', '劳动', '心理健康', '综合实践活动'];
 
 const primaryGrades = ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'];
-const middleGrades = ['七年级', '八年级', '九年级', '初一', '初二', '初三'];
+const middleGrades = ['七年级', '八年级', '九年级'];
 const highGrades = ['高一', '高二', '高三'];
 
 const CreateLesson: React.FC = () => {
@@ -32,12 +35,16 @@ const CreateLesson: React.FC = () => {
     summary: '',
   });
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generatingStage, setGeneratingStage] = useState('');
   const [error, setError] = useState('');
   const [aiResult, setAiResult] = useState('');
   const [detectResult, setDetectResult] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const [detectingStage, setDetectingStage] = useState('');
   const [showAiPreview, setShowAiPreview] = useState(false);
   const [generatedLesson, setGeneratedLesson] = useState<{
-    teachingGoals: string[];
+    teachingGoals: string;
     keyPoints: string[];
     teachingProcess: string;
     assignments: string;
@@ -55,11 +62,16 @@ const CreateLesson: React.FC = () => {
   const [historyGrade, setHistoryGrade] = useState('');
   const [historySubjects, setHistorySubjects] = useState<string[]>([]);
   const [historyGrades, setHistoryGrades] = useState<string[]>([]);
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyBackendTotal, setHistoryBackendTotal] = useState(0);
+  const [historyBackendPage, setHistoryBackendPage] = useState(1);
+  const [historyHasNext, setHistoryHasNext] = useState(false);
+  const [historyHasPrev, setHistoryHasPrev] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showNewConfirm, setShowNewConfirm] = useState(false);
+  const [showSaveConfirmModal, setShowSaveConfirmModal] = useState(false);
   const isEditingRef = React.useRef(false);
+  const initialFormDataRef = React.useRef<typeof formData | null>(null);
   
   // 新课标查询相关状态
   const [curriculumData, setCurriculumData] = useState<CurriculumStandard | null>(null);
@@ -87,47 +99,57 @@ const CreateLesson: React.FC = () => {
     setHistoryGrade('');
   }, [historyStage]);
 
+  // 改进的学段检测逻辑：优先通过年级检测，其次通过学科检测
+  const detectStage = (grade: string, subject: string): 'primary' | 'middle' | 'high' => {
+    // 优先通过年级检测
+    if (grade) {
+      if (['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'].includes(grade)) {
+        return 'primary';
+      } else if (['七年级', '八年级', '九年级'].includes(grade)) {
+        return 'middle';
+      } else if (['高一', '高二', '高三'].includes(grade)) {
+        return 'high';
+      }
+    }
+    // 如果年级无法确定，通过学科检测
+    if (subject) {
+      // 高中学段独有学科
+      if (['思想政治', '通用技术'].includes(subject)) return 'high';
+      // 小学学段独有学科
+      if (['科学', '书法', '信息科技'].includes(subject)) return 'primary';
+      // 初中及以上学段共有的学科（初中独有或初中高中共有）
+      if (['历史', '地理', '物理', '化学', '生物学'].includes(subject)) return 'middle';
+      // 对于同时存在于多个学段的公共学科（如语文、数学等），无法唯一确定，默认小学
+    }
+    // 默认使用小学
+    return 'primary';
+  };
+
   const loadLessonForEdit = async (lessonId: number) => {
     // 标记正在编辑，防止 useEffect 重置表单
     isEditingRef.current = true;
     setIsEditing(true);
     try {
       const data = await lessonAPI.detail(lessonId);
-      console.log('📝 编辑教案完整数据:', JSON.stringify(data, null, 2));
-      // 检测学段
-      console.log('📝 DEBUG - grade:', data.grade, 'subject:', data.subject);
-      let detectedStage: 'primary' | 'middle' | 'high' = 'primary';
-      if (data.grade) {
-        if (['七年级','八年级','九年级','初一','初二','初三'].includes(data.grade)) {
-          detectedStage = 'middle';
-        } else if (['高一','高二','高三'].includes(data.grade)) {
-          detectedStage = 'high';
-        }
-      } else if (data.subject) {
-        // 当 grade 为空时，通过 subject 检测学段
-        console.log('📝 DEBUG - subject:', data.subject, 'highSubjects includes:', highSubjects.includes(data.subject), 'middleSubjects includes:', middleSubjects.includes(data.subject));
-        // 优先匹配高中（因为高中学科是初中学科的超集）
-        if (highSubjects.includes(data.subject)) {
-          detectedStage = 'high';
-        } else if (middleSubjects.includes(data.subject)) {
-          detectedStage = 'middle';
-        }
-      }
-      console.log('📝 检测学段:', detectedStage);
+      // 使用改进的学段检测逻辑
+      const detectedStage = detectStage(data.grade || '', data.subject || '');
       // 直接同步设置所有状态，不使用 setTimeout
       setStage(detectedStage);
       setSubjects(detectedStage === 'primary' ? primarySubjects : detectedStage === 'middle' ? middleSubjects : highSubjects);
       setGrades(detectedStage === 'primary' ? primaryGrades : detectedStage === 'middle' ? middleGrades : highGrades);
-      setFormData({
+      const loadedFormData = {
         title: data.title || '',
         subject: data.subject || '',
         grade: data.grade || '',
-        teachingGoals: Array.isArray(data.teachingGoals) ? data.teachingGoals.join('\n') : (data.teachingGoals || ''),
+        teachingGoals: teachingGoalsToText(data.teachingGoals),
         keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints.join('\n') : (data.keyPoints || ''),
         teachingProcess: typeof data.teachingProcess === 'object' ? JSON.stringify(data.teachingProcess, null, 2) : (data.teachingProcess || ''),
         assignments: data.assignments || '',
         summary: data.summary || '',
-      });
+      };
+      setFormData(loadedFormData);
+      // 保存初始表单数据，用于检测是否有修改
+      initialFormDataRef.current = loadedFormData;
       // 延迟清除编辑标记
       setTimeout(() => {
         setIsEditing(false);
@@ -187,47 +209,114 @@ const CreateLesson: React.FC = () => {
   }, [formData.subject, formData.grade]);
 
   // 获取历史教案
-  const fetchHistoryLessons = async (page = 1, keyword = '', subject = '', grade = '') => {
-    setHistoryLoading(true);
+  const fetchHistoryLessons = async (
+    page = 1,
+    keyword = '',
+    subject = '',
+    grade = '',
+    stage = '',
+    append = false
+  ) => {
+    if (append) {
+      setHistoryLoadingMore(true);
+    } else {
+      setHistoryLoading(true);
+    }
     try {
       const result = await lessonAPI.list({
         page,
-        pageSize: 50,
+        pageSize: 20,
         keyword: keyword || undefined,
         subject: subject || undefined,
       });
       let filtered = result.lessons || [];
+      // 年级筛选
       if (grade) {
         filtered = filtered.filter((l: any) => l.grade === grade);
       }
-      setHistoryLessons(filtered);
-      setHistoryTotal(filtered.length);
+      // 学段筛选（通过年级和学科推断学段）
+      if (stage) {
+        filtered = filtered.filter((l: any) => {
+          const detectedStage = detectStage(l.grade || '', l.subject || '');
+          return detectedStage === stage;
+        });
+      }
+
+      if (append) {
+        setHistoryLessons(prev => [...prev, ...filtered]);
+      } else {
+        setHistoryLessons(filtered);
+      }
+
+      // 使用后端返回的分页信息
+      const pagination = result.pagination || {};
+      const totalPages = pagination.totalPages || 0;
+      setHistoryBackendTotal(pagination.total || 0);
+      setHistoryBackendPage(page);
+      setHistoryHasNext(page < totalPages);
+      setHistoryHasPrev(page > 1);
     } catch (error) {
       console.error('获取历史教案失败:', error);
-      setHistoryLessons([]);
+      if (!append) {
+        setHistoryLessons([]);
+      }
     } finally {
       setHistoryLoading(false);
+      setHistoryLoadingMore(false);
     }
   };
 
   useEffect(() => {
     if (activeTab === 'history') {
-      fetchHistoryLessons(historyPage, historyKeyword, historySubject, historyGrade);
+      fetchHistoryLessons(1, historyKeyword, historySubject, historyGrade, historyStage, false);
     }
-  }, [activeTab, historyPage, historySubject, historyGrade]);
+  }, [activeTab, historySubject, historyGrade, historyStage]);
 
   const handleHistorySearch = () => {
-    setHistoryPage(1);
-    fetchHistoryLessons(1, historyKeyword, historySubject, historyGrade);
+    fetchHistoryLessons(1, historyKeyword, historySubject, historyGrade, historyStage, false);
+  };
+
+  // 翻到上一页
+  const goToPrevPage = () => {
+    if (historyBackendPage > 1) {
+      fetchHistoryLessons(
+        historyBackendPage - 1,
+        historyKeyword,
+        historySubject,
+        historyGrade,
+        historyStage,
+        false
+      );
+    }
+  };
+
+  // 翻到下一页
+  const goToNextPage = () => {
+    if (historyHasNext) {
+      fetchHistoryLessons(
+        historyBackendPage + 1,
+        historyKeyword,
+        historySubject,
+        historyGrade,
+        historyStage,
+        false
+      );
+    }
   };
 
   // 加载历史教案到表单
   const loadHistoryLesson = (lesson: Lesson) => {
+    // 根据历史教案的学科和年级检测学段，更新下拉框选项
+    const detectedStage = detectStage(lesson.grade || '', lesson.subject || '');
+    setStage(detectedStage);
+    setSubjects(detectedStage === 'primary' ? primarySubjects : detectedStage === 'middle' ? middleSubjects : highSubjects);
+    setGrades(detectedStage === 'primary' ? primaryGrades : detectedStage === 'middle' ? middleGrades : highGrades);
+
     setFormData({
       title: lesson.title || '',
       subject: lesson.subject || '',
       grade: lesson.grade || '',
-      teachingGoals: cleanTextField(Array.isArray(lesson.teachingGoals) ? lesson.teachingGoals.join('\n') : (lesson.teachingGoals || '')),
+      teachingGoals: cleanTextField(teachingGoalsToText(lesson.teachingGoals)),
       keyPoints: cleanTextField(Array.isArray(lesson.keyPoints) ? lesson.keyPoints.join('\n') : (lesson.keyPoints || '')),
       teachingProcess: typeof lesson.teachingProcess === 'object' ? JSON.stringify(lesson.teachingProcess, null, 2) : (lesson.teachingProcess || ''),
       assignments: lesson.assignments || '',
@@ -242,6 +331,13 @@ const CreateLesson: React.FC = () => {
   };
 
   const handleStageChange = (newStage: 'primary' | 'middle' | 'high') => {
+    // 如果当前有数据，询问用户是否确认切换
+    if ((formData.subject || formData.grade) && newStage !== stage) {
+      if (!window.confirm('切换学段将重置年级和学科，是否继续？')) {
+        return;
+      }
+    }
+
     setStage(newStage);
     if (newStage === 'primary') {
       setSubjects(primarySubjects);
@@ -253,10 +349,8 @@ const CreateLesson: React.FC = () => {
       setSubjects(highSubjects);
       setGrades(highGrades);
     }
-    // 只有手动切换学段时才重置学科和年级
-    if (!isEditingRef.current) {
-      setFormData(prev => ({ ...prev, subject: '', grade: '' }));
-    }
+    // 重置学科和年级
+    setFormData(prev => ({ ...prev, subject: '', grade: '' }));
   };
 
   const [showOverwriteModal, setShowOverwriteModal] = useState(false);
@@ -284,6 +378,64 @@ const CreateLesson: React.FC = () => {
     return value;
   };
 
+  // 将教学过程的嵌套对象/JSON字符串转为可读文本
+  const convertTeachingProcessToText = (tp: any): string => {
+    if (!tp) return '';
+    if (typeof tp === 'string') {
+      // 尝试解析JSON字符串
+      try {
+        const parsed = JSON.parse(tp);
+        if (typeof parsed === 'object' && parsed !== null) {
+          return convertTeachingProcessToText(parsed);
+        }
+      } catch {
+        return tp;
+      }
+      return tp;
+    }
+    if (typeof tp !== 'object' || tp === null) return String(tp);
+
+    const titles: Record<string, string> = {
+      introduction: '【课堂导入】',
+      newTeaching: '【新课讲授】',
+      practice: '【巩固练习】',
+      summary: '【课堂小结】'
+    };
+
+    const convertToText = (obj: any, depth = 0): string => {
+      if (typeof obj === 'string') return obj;
+      if (Array.isArray(obj)) return obj.map(item => convertToText(item, depth)).join('\n');
+      if (typeof obj === 'object' && obj !== null) {
+        return Object.entries(obj)
+          .map(([k, v]) => {
+            const keyMap: Record<string, string> = {
+              duration: '时长', activities: '活动', stages: '教学环节',
+              stageName: '环节名称', teacherActivities: '教师活动',
+              studentActivities: '学生活动', teachingPoints: '教学要点',
+              timeAllocation: '时间安排'
+            };
+            const label = keyMap[k] || k;
+            return typeof v === 'object' && v !== null
+              ? `${label}：\n${convertToText(v, depth + 1)}`
+              : `${label}：${v}`;
+          })
+          .filter(Boolean)
+          .join('\n');
+      }
+      return String(obj);
+    };
+
+    return Object.entries(tp)
+      .map(([key, value]) => {
+        if (titles[key] && value) {
+          return `${titles[key]}\n${convertToText(value)}`;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+  };
+
   const resetForm = () => {
     setFormData({
       title: '',
@@ -308,12 +460,70 @@ const CreateLesson: React.FC = () => {
     setPreviewLesson(null);
   };
 
+  // 验证学段、年级、学科的对应关系
+  const validateFields = (): boolean => {
+    // 检查年级是否属于当前学段
+    if (formData.grade) {
+      if (stage === 'primary' && !primaryGrades.includes(formData.grade)) {
+        setError('选择的年级不属于小学学段，请检查！');
+        return false;
+      }
+      if (stage === 'middle' && !middleGrades.includes(formData.grade)) {
+        setError('选择的年级不属于初中学段，请检查！');
+        return false;
+      }
+      if (stage === 'high' && !highGrades.includes(formData.grade)) {
+        setError('选择的年级不属于高中学段，请检查！');
+        return false;
+      }
+    }
+
+    // 检查学科是否属于当前学段
+    if (formData.subject) {
+      if (stage === 'primary' && !primarySubjects.includes(formData.subject)) {
+        setError('选择的学科不属于小学学段，请检查！');
+        return false;
+      }
+      if (stage === 'middle' && !middleSubjects.includes(formData.subject)) {
+        setError('选择的学科不属于初中学段，请检查！');
+        return false;
+      }
+      if (stage === 'high' && !highSubjects.includes(formData.subject)) {
+        setError('选择的学科不属于高中学段，请检查！');
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  // 检测编辑模式下表单是否有修改
+  const hasFormChanged = (): boolean => {
+    if (!initialFormDataRef.current) return false;
+    const initial = initialFormDataRef.current;
+    return (
+      formData.title !== initial.title ||
+      formData.subject !== initial.subject ||
+      formData.grade !== initial.grade ||
+      formData.teachingGoals !== initial.teachingGoals ||
+      formData.keyPoints !== initial.keyPoints ||
+      formData.teachingProcess !== initial.teachingProcess ||
+      formData.assignments !== initial.assignments ||
+      formData.summary !== initial.summary
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (!formData.title || !formData.subject || !formData.grade) {
       setError('请填写必填字段（标题、学科、年级）');
+      return;
+    }
+
+    // 验证学段、年级、学科的对应关系
+    if (!validateFields()) {
       return;
     }
 
@@ -339,7 +549,7 @@ const CreateLesson: React.FC = () => {
     try {
       const data = {
         ...formData,
-        teachingGoals: formData.teachingGoals ? JSON.stringify(cleanTextField(formData.teachingGoals).split('\n').filter((l: string) => l.trim())) : '[]',
+        teachingGoals: formData.teachingGoals ? JSON.stringify(textToTeachingGoals(cleanTextField(formData.teachingGoals))) : JSON.stringify({ version: 2, dimensions: [] }),
         keyPoints: formData.keyPoints ? JSON.stringify(cleanTextField(formData.keyPoints).split('\n').filter((l: string) => l.trim())) : '[]',
         teachingProcess: formData.teachingProcess ? formData.teachingProcess : '',
         overwrite,
@@ -360,14 +570,27 @@ const CreateLesson: React.FC = () => {
     }
 
     setLoading(true);
+    setGenerating(true);
+    setGeneratingStage('正在分析教学内容...');
     setAiResult('');
     try {
+      // 模拟阶段更新
+      const stageTimer1 = setTimeout(() => setGeneratingStage('正在查询课程标准...'), 3000);
+      const stageTimer2 = setTimeout(() => setGeneratingStage('正在生成教学目标...'), 8000);
+      const stageTimer3 = setTimeout(() => setGeneratingStage('正在设计教学过程...'), 15000);
+      const stageTimer4 = setTimeout(() => setGeneratingStage('正在优化教案内容...'), 25000);
+      
       const result = await lessonAPI.generateSubjectAware({
         subject: formData.subject,
         grade: formData.grade,
         topic: formData.title,
         title: formData.title
       });
+      
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+      clearTimeout(stageTimer3);
+      clearTimeout(stageTimer4);
 
       // 保存生成的教案数据用于预览
       let teachingProcessText = '';
@@ -419,17 +642,19 @@ const CreateLesson: React.FC = () => {
         }
       }
 
-      // 提取教学目标
-      let teachingGoals: string[] = [];
-      if (result.teachingObjectives) {
-        const obj = result.teachingObjectives;
-        if (typeof obj === 'object' && obj !== null) {
-          teachingGoals = [
-            ...(Array.isArray(obj.knowledge) ? obj.knowledge : []),
-            ...(Array.isArray(obj.ability) ? obj.ability : []),
-            ...(Array.isArray(obj.emotion) ? obj.emotion : [])
-          ];
-        }
+      // 提取教学目标（支持新旧两种格式）
+      let teachingGoalsData: TeachingGoalsData;
+      if (result.teachingGoals && typeof result.teachingGoals === 'object' && result.teachingGoals.dimensions) {
+        // 新格式：{ version: 2, dimensions: [...] }
+        teachingGoalsData = result.teachingGoals;
+      } else if (result.teachingObjectives) {
+        // 旧格式路径B：{ knowledge: [], ability: [], emotion: [] }
+        teachingGoalsData = parseTeachingGoals(result.teachingObjectives);
+      } else if (result.teachingGoals && Array.isArray(result.teachingGoals)) {
+        // 旧格式路径A：扁平数组
+        teachingGoalsData = parseTeachingGoals(result.teachingGoals);
+      } else {
+        teachingGoalsData = { version: 2, dimensions: [] };
       }
 
       // 提取教学重难点
@@ -444,8 +669,9 @@ const CreateLesson: React.FC = () => {
         }
       }
 
+      const teachingGoalsText = teachingGoalsToText(teachingGoalsData);
       const lessonData = {
-        teachingGoals,
+        teachingGoals: teachingGoalsText,
         keyPoints,
         teachingProcess: teachingProcessText || result.teachingProcessText || '',
         assignments: result.homework ? (Array.isArray(result.homework) ? result.homework.join('\n') : String(result.homework)) : '',
@@ -457,7 +683,7 @@ const CreateLesson: React.FC = () => {
       // 同时填充表单
       setFormData((prev) => ({
         ...prev,
-        teachingGoals: lessonData.teachingGoals.join('\n'),
+        teachingGoals: lessonData.teachingGoals,
         keyPoints: lessonData.keyPoints.join('\n'),
         teachingProcess: lessonData.teachingProcess,
         assignments: lessonData.assignments,
@@ -468,6 +694,8 @@ const CreateLesson: React.FC = () => {
       setError((err as Error).message || 'AI生成失败');
     } finally {
       setLoading(false);
+      setGenerating(false);
+      setGeneratingStage('');
     }
   };
 
@@ -478,8 +706,15 @@ const CreateLesson: React.FC = () => {
     }
 
     setLoading(true);
+    setDetecting(true);
+    setDetectingStage('正在分析教案内容...');
     setDetectResult('');
     try {
+      // 模拟阶段更新
+      const stageTimer1 = setTimeout(() => setDetectingStage('正在匹配新课标要求...'), 3000);
+      const stageTimer2 = setTimeout(() => setDetectingStage('正在评估教学目标...'), 6000);
+      const stageTimer3 = setTimeout(() => setDetectingStage('正在生成检测报告...'), 10000);
+      
       const systemPrompt = `你是一位教育专家，擅长根据新课标（2022年版）分析教案质量。
 请从以下维度对教案进行检测评估：
 1. 教学目标（满分25分）：是否体现知识与技能、过程与方法、情感态度价值观三维目标
@@ -543,12 +778,28 @@ ${formData.summary || '未填写'}
         { role: 'user', content: userPrompt }
       ]);
 
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+      clearTimeout(stageTimer3);
+      
       setDetectResult(`【新课标智能检测结果】\n\n📚 学科：${formData.subject}  |  📖 年级：${formData.grade}\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${result.content}`);
     } catch (err) {
       setError((err as Error).message || '新课标检测失败');
     } finally {
       setLoading(false);
+      setDetecting(false);
+      setDetectingStage('');
     }
+  };
+
+  // HTML转义函数，防止XSS
+  const escapeHtml = (str: string): string => {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   };
 
   const handleExportPDF = async () => {
@@ -557,53 +808,54 @@ ${formData.summary || '未填写'}
       return;
     }
 
-    // 使用浏览器打印功能生成PDF
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>${formData.title} - 教案</title>
-        <style>
-          @page { margin: 2cm; size: A4; }
-          body { font-family: "SimSun", "宋体", "STSong", serif; font-size: 14px; line-height: 2; color: #000; padding: 0; margin: 0; }
-          h1 { text-align: center; font-size: 22px; margin: 20px 0; padding-bottom: 15px; border-bottom: 2px solid #000; }
-          .info { text-align: center; margin-bottom: 30px; font-size: 13px; color: #333; }
-          .info span { margin: 0 15px; }
-          h2 { font-size: 16px; margin: 25px 0 10px 0; padding: 5px 10px; border-left: 4px solid #000; background: #f5f5f5; }
-          .section { margin: 10px 0; padding: 10px 15px; }
-          .section p { margin: 5px 0; text-indent: 2em; }
-          pre { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; font-size: 14px; line-height: 2; margin: 0; }
-          .footer { text-align: center; margin-top: 40px; padding-top: 15px; border-top: 1px solid #ccc; font-size: 11px; color: #999; }
-        </style>
-      </head>
-      <body>
-        <h1>${formData.title}</h1>
-        <div class="info">
-          <span>学科：${formData.subject}</span>
-          <span>年级：${formData.grade}</span>
-        </div>
-        <h2>一、教学目标</h2>
-        <div class="section"><pre>${formData.teachingGoals || '未填写'}</pre></div>
-        <h2>二、教学重点</h2>
-        <div class="section"><pre>${formData.keyPoints || '未填写'}</pre></div>
-        <h2>三、教学过程</h2>
-        <div class="section"><pre>${formData.teachingProcess || '未填写'}</pre></div>
-        <h2>四、作业布置</h2>
-        <div class="section"><pre>${formData.assignments || '未填写'}</pre></div>
-        <h2>五、教学总结</h2>
-        <div class="section"><pre>${formData.summary || '未填写'}</pre></div>
-        <div class="footer">网师云 - 师范生备课辅助系统</div>
-      </body>
-      </html>
-    `;
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(printContent);
-      printWindow.document.close();
-      printWindow.onload = () => {
-        printWindow.print();
+    setLoading(true);
+    try {
+      // 先保存教案（允许覆盖同名教案），然后导出PDF
+      const data = {
+        ...formData,
+        teachingGoals: formData.teachingGoals ? JSON.stringify(textToTeachingGoals(formData.teachingGoals)) : JSON.stringify({ version: 2, dimensions: [] }),
+        keyPoints: formData.keyPoints ? JSON.stringify(formData.keyPoints.split('\n')) : '[]',
+        teachingProcess: formData.teachingProcess ? formData.teachingProcess : '',
+        overwrite: true,
       };
+      const savedLesson = await lessonAPI.create(data);
+      
+      // 使用后端API导出PDF
+      const blob = await lessonAPI.export(savedLesson.id, 'pdf');
+      // 检查返回的是否是 JSON 错误
+      if (blob.type === 'application/json' || blob.type === 'text/plain') {
+        const text = await blob.text();
+        try {
+          const err = JSON.parse(text);
+          throw new Error(err.message || 'PDF导出失败');
+        } catch (parseError: any) {
+          if (parseError?.message !== 'PDF导出失败') throw new Error('PDF导出失败');
+          throw parseError;
+        }
+      }
+      // 验证 PDF 文件头（0x25 0x50 0x44 0x46 0x2D = %PDF-）
+      const headBytes = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+      const isPdf = headBytes[0] === 0x25 && headBytes[1] === 0x50 && headBytes[2] === 0x44 && headBytes[3] === 0x46 && headBytes[4] === 0x2D;
+      if (!isPdf) {
+        if (headBytes[0] === 0x3C) {
+          const text = await blob.text();
+          const match = text.match(/"message"\s*:\s*"([^"]+)"/);
+          throw new Error(match ? match[1] : 'PDF渲染失败，服务端未配置PDF渲染器');
+        }
+        throw new Error('导出的文件不是有效的PDF格式');
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${formData.title}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError((err as Error).message || 'PDF导出失败');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -618,7 +870,7 @@ ${formData.summary || '未填写'}
       // 先保存教案（允许覆盖同名教案），然后导出
       const data = {
         ...formData,
-        teachingGoals: formData.teachingGoals ? JSON.stringify(formData.teachingGoals.split('\n')) : '[]',
+        teachingGoals: formData.teachingGoals ? JSON.stringify(textToTeachingGoals(formData.teachingGoals)) : JSON.stringify({ version: 2, dimensions: [] }),
         keyPoints: formData.keyPoints ? JSON.stringify(formData.keyPoints.split('\n')) : '[]',
         teachingProcess: formData.teachingProcess ? formData.teachingProcess : '',
         overwrite: true,
@@ -630,7 +882,7 @@ ${formData.summary || '未填写'}
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${formData.title}.doc`;
+      a.download = `${formData.title}.docx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -646,24 +898,47 @@ ${formData.summary || '未填写'}
     if (!confirm('确定要删除这个教案吗？')) return;
     try {
       await lessonAPI.delete(id);
-      fetchHistoryLessons(historyPage, historyKeyword, historySubject, historyGrade);
+      fetchHistoryLessons(1, historyKeyword, historySubject, historyGrade, historyStage, false);
     } catch (error) {
       alert('删除失败');
     }
   };
 
-  const historyTotalPages = Math.ceil(historyTotal / 10);
-
   return (
-    <Layout 
-      title="教案编写" 
+    <Layout
+      title="教案编写"
       subtitle="创建和管理教学教案"
       breadcrumbs={[
         { label: '首页', path: '/' },
-        { label: '我的备课', path: '/lessons' },
+        { label: '我的备课', path: '/teaching-preparation' },
         { label: '教案编写' }
       ]}
     >
+      <GeneratingProgressModal
+        visible={generating}
+        title="AI智能生成教案中"
+        stage={generatingStage}
+        estimatedTime={180}
+        tips={[
+          'AI正在分析教学内容，请耐心等待...',
+          '正在查询课程标准...',
+          '正在根据课程标准生成教学目标...',
+          '正在设计完整的教学过程...',
+          '教案即将生成完成，请勿关闭页面...',
+        ]}
+      />
+      <GeneratingProgressModal
+        visible={detecting}
+        title="AI智能检测新课标中"
+        stage={detectingStage}
+        estimatedTime={60}
+        tips={[
+          'AI正在分析教案内容，请耐心等待...',
+          '正在匹配新课标要求...',
+          '正在评估教学目标...',
+          '检测报告即将生成完成，请勿关闭页面...',
+        ]}
+      />
       <div className="max-w-6xl mx-auto">
         {/* 顶部Tab切换 */}
         <div className="bg-white rounded-xl shadow-sm mb-6 overflow-hidden">
@@ -781,7 +1056,14 @@ ${formData.summary || '未填写'}
                   </svg>
                   新建教案
                 </Button>
-                <Button onClick={handleSubmit as any} loading={submitting} className="flex items-center gap-2">
+                <Button onClick={() => {
+                  // 编辑模式下（从AI生成跳转过来的教案），显示保存确认弹窗
+                  if (editIdFromUrl) {
+                    setShowSaveConfirmModal(true);
+                  } else {
+                    handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+                  }
+                }} loading={submitting} className="flex items-center gap-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
@@ -862,8 +1144,8 @@ ${formData.summary || '未填写'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 一、教学目标
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${generatedLesson.teachingGoals.length > 0 
-  ? generatedLesson.teachingGoals.map((goal, index) => `${index + 1}. ${goal}`).join('\n')
+${generatedLesson.teachingGoals
+  ? generatedLesson.teachingGoals.split('\n').filter((l: string) => l.trim()).map((goal: string, index: number) => `${index + 1}. ${goal}`).join('\n')
   : '暂无内容'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1015,7 +1297,7 @@ ${generatedLesson.summary || '暂无内容'}
                       <textarea
                         value={formData.teachingGoals}
                         onChange={(e) => handleChange('teachingGoals', e.target.value)}
-                        placeholder="请输入教学目标，每行一个目标"
+                        placeholder="请输入教学目标，每行一个目标。格式：维度名称：目标内容（如：语言建构与运用：能够正确朗读课文）"
                         rows={4}
                         className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none bg-gray-50 text-sm leading-relaxed transition-all placeholder:text-gray-300"
                       />
@@ -1336,7 +1618,6 @@ ${generatedLesson.summary || '暂无内容'}
                   value={historyStage}
                   onChange={(e) => {
                     setHistoryStage(e.target.value);
-                    setHistoryPage(1);
                   }}
                   className="px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm bg-gray-50 transition-all"
                 >
@@ -1349,7 +1630,6 @@ ${generatedLesson.summary || '暂无内容'}
                   value={historySubject}
                   onChange={(e) => {
                     setHistorySubject(e.target.value);
-                    setHistoryPage(1);
                   }}
                   className="px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm bg-gray-50 transition-all"
                 >
@@ -1362,7 +1642,6 @@ ${generatedLesson.summary || '暂无内容'}
                   value={historyGrade}
                   onChange={(e) => {
                     setHistoryGrade(e.target.value);
-                    setHistoryPage(1);
                   }}
                   className="px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm bg-gray-50 transition-all"
                 >
@@ -1405,7 +1684,7 @@ ${generatedLesson.summary || '暂无内容'}
               <>
                 {/* 统计信息 */}
                 <div className="flex items-center justify-between mb-4 px-1">
-                  <span className="text-sm text-gray-500">共 <span className="font-semibold text-gray-700">{historyTotal}</span> 篇教案</span>
+                  <span className="text-sm text-gray-500">共 <span className="font-semibold text-gray-700">{historyBackendTotal}</span> 篇教案</span>
                   <span className="text-xs text-gray-400">点击教案标题查看详情</span>
                 </div>
 
@@ -1520,36 +1799,54 @@ ${generatedLesson.summary || '暂无内容'}
                   })}
                 </div>
 
-                {/* 分页 */}
-                {historyTotalPages > 1 && (
-                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-6 py-4 flex items-center justify-between">
-                    <span className="text-sm text-gray-500">
-                      第 <span className="font-medium text-gray-700">{historyPage}</span> / {historyTotalPages} 页
-                    </span>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={historyPage <= 1}
-                        onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
-                      >
-                        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                        上一页
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={historyPage >= historyTotalPages}
-                        onClick={() => setHistoryPage(p => Math.min(historyTotalPages, p + 1))}
-                      >
-                        下一页
-                        <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </Button>
+                {/* 翻页按钮 - 始终存在 */}
+                {historyLessons.length > 0 && (
+                  <div className="flex items-center justify-center gap-4 py-5 mt-2 border-t border-gray-100">
+                    <button
+                      onClick={goToPrevPage}
+                      disabled={!historyHasPrev || historyLoadingMore}
+                      className={`flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        historyHasPrev && !historyLoadingMore
+                          ? 'bg-white border border-gray-200 text-gray-700 hover:border-primary-400 hover:text-primary-600 hover:shadow-sm active:scale-95'
+                          : 'bg-gray-50 border border-gray-100 text-gray-300 cursor-not-allowed'
+                      }`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                      上一页
+                    </button>
+
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <span className="px-3 py-1 bg-primary-50 text-primary-600 rounded-lg font-semibold">
+                        {historyBackendPage}
+                      </span>
+                      <span className="text-gray-300">/</span>
+                      <span>{Math.max(1, Math.ceil(historyBackendTotal / 20))}</span>
+                      <span className="text-gray-400 ml-1">（共 {historyBackendTotal} 篇）</span>
                     </div>
+
+                    <button
+                      onClick={goToNextPage}
+                      disabled={!historyHasNext || historyLoadingMore}
+                      className={`flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        historyHasNext && !historyLoadingMore
+                          ? 'bg-white border border-gray-200 text-gray-700 hover:border-primary-400 hover:text-primary-600 hover:shadow-sm active:scale-95'
+                          : 'bg-gray-50 border border-gray-100 text-gray-300 cursor-not-allowed'
+                      }`}
+                    >
+                      下一页
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+
+                {/* 无数据时的空状态（已在上方处理） */}
+                {!historyLoading && historyLessons.length === 0 && (
+                  <div className="text-center py-4 text-sm text-gray-400">
+                    暂无教案
                   </div>
                 )}
               </>
@@ -1582,7 +1879,7 @@ ${generatedLesson.summary || '暂无内容'}
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>教学目标
                     </h3>
                     <div className="text-sm text-gray-600 space-y-1 pl-3">
-                      {cleanTextField(Array.isArray(previewLesson.teachingGoals) ? previewLesson.teachingGoals.join('\n') : (previewLesson.teachingGoals || '')).split('\n').filter((l: string) => l.trim()).map((g: string, i: number) => (
+                      {cleanTextField(teachingGoalsToText(previewLesson.teachingGoals)).split('\n').filter((l: string) => l.trim()).map((g: string, i: number) => (
                         <p key={i}>{i + 1}. {g}</p>
                       ))}
                     </div>
@@ -1606,7 +1903,7 @@ ${generatedLesson.summary || '暂无内容'}
                       <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>教学过程
                     </h3>
                     <div className="text-sm text-gray-600 whitespace-pre-wrap pl-3 bg-gray-50 p-4 rounded-lg">
-                      {typeof previewLesson.teachingProcess === 'object' ? JSON.stringify(previewLesson.teachingProcess, null, 2) : previewLesson.teachingProcess}
+                      {convertTeachingProcessToText(previewLesson.teachingProcess)}
                     </div>
                   </div>
                 )}
@@ -1647,18 +1944,51 @@ ${generatedLesson.summary || '暂无内容'}
                 已存在名为「{formData.title}」的教案，是否覆盖现有教案？
                 <br />
                 <span className="text-sm text-gray-400 mt-2 block">
-                  若选择「保留两者」，新教案将自动添加序号后缀以区分
+                  若选择「保留两者」，新教案将自动添加序号（如 _01、_02…）以区分
                 </span>
               </p>
               <div className="flex gap-3">
                 <Button
                   variant="secondary"
                   className="flex-1"
-                  onClick={() => {
-                    const newTitle = `${formData.title}_${Date.now()}`;
+                  onClick={async () => {
+                    // 从01开始递增序号，找到第一个未被占用的标题
+                    const baseTitle = formData.title;
+                    let newTitle = `${baseTitle}_01`;
+                    try {
+                      for (let i = 1; i <= 99; i++) {
+                        const padded = String(i).padStart(2, '0');
+                        const candidate = `${baseTitle}_${padded}`;
+                        const result = await lessonAPI.checkTitle(candidate);
+                        if (!result.exists) {
+                          newTitle = candidate;
+                          break;
+                        }
+                      }
+                    } catch {
+                      newTitle = `${baseTitle}_01`;
+                    }
+                    // 直接使用新标题构建数据并保存，避免 state 异步更新导致标题未生效
                     setFormData(prev => ({ ...prev, title: newTitle }));
                     setShowOverwriteModal(false);
-                    handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+                    setSubmitting(true);
+                    setError('');
+                    try {
+                      const data = {
+                        ...formData,
+                        title: newTitle,
+                        teachingGoals: formData.teachingGoals ? JSON.stringify(textToTeachingGoals(cleanTextField(formData.teachingGoals))) : JSON.stringify({ version: 2, dimensions: [] }),
+                        keyPoints: formData.keyPoints ? JSON.stringify(cleanTextField(formData.keyPoints).split('\n').filter((l: string) => l.trim())) : '[]',
+                        teachingProcess: formData.teachingProcess || '',
+                        overwrite: false,
+                      };
+                      await lessonAPI.create(data);
+                      alert(`教案「${newTitle}」保存成功！`);
+                    } catch (err) {
+                      setError((err as Error).message || '保存失败');
+                    } finally {
+                      setSubmitting(false);
+                    }
                   }}
                 >
                   保留两者
@@ -1695,6 +2025,60 @@ ${generatedLesson.summary || '暂无内容'}
                 <div className="flex justify-end gap-3">
                   <button onClick={() => { setShowNewConfirm(false); resetForm(); }} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">不保存</button>
                   <button onClick={async () => { setShowNewConfirm(false); if (formData.title && formData.subject && formData.grade) { try { const checkResult = await lessonAPI.checkTitle(formData.title); await saveLesson(checkResult.exists); } catch { await saveLesson(false); } } resetForm(); }} className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors">保存并新建</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 编辑模式保存确认弹窗 - 提示AI已自动保存 */}
+        {showSaveConfirmModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowSaveConfirmModal(false)} />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+              <div className="p-6">
+                {/* 图标 */}
+                <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-amber-100 rounded-full">
+                  <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">保存教案确认</h3>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-blue-700 leading-relaxed">
+                    💡 系统在AI生成教案时已自动保存了该教案。如果您在生成教案后对内容进行了修改，请确认保存，避免修改的部分丢失。
+                  </p>
+                </div>
+                {hasFormChanged() && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                    <p className="text-sm text-amber-700 leading-relaxed">
+                      ⚠️ 检测到您已对教案内容进行了修改，请务必确认保存以保留您的修改。
+                    </p>
+                  </div>
+                )}
+                {!hasFormChanged() && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      📝 当前教案内容与AI生成时一致，未检测到修改。您仍然可以确认保存。
+                    </p>
+                  </div>
+                )}
+                <div className="flex justify-end gap-3 mt-6">
+                  <button
+                    onClick={() => setShowSaveConfirmModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowSaveConfirmModal(false);
+                      await handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+                  >
+                    确认保存
+                  </button>
                 </div>
               </div>
             </div>

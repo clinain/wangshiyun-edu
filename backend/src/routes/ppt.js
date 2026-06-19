@@ -26,9 +26,6 @@ router.get('/check-title', pptController.checkTitle);
 // 生成PPT
 router.post('/generate', pptController.generateFromLesson);
 
-// 创建自定义PPT（不需要关联教案）
-router.post('/create-custom', pptController.createCustomPPT);
-
 // 同步PPT（根据教案更新或创建）
 router.post('/sync', pptController.syncFromLesson);
 

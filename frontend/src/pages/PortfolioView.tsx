@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import { portfolioAPI } from '@/api';
+import CommentSection from '@/components/CommentSection';
 
 interface LessonInfo {
   id: number;
@@ -286,6 +287,10 @@ const PortfolioView: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="mt-8">
+        <CommentSection portfolioId={portfolio?.id} />
       </div>
     </Layout>
   );

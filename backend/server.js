@@ -33,9 +33,11 @@ const express = require('express');
 
 // CORS 跨域资源共享
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 // 数据库配置模块
 const db = require('./src/config/database');
+const { initDatabase } = require('./src/config/initDatabase');
 
 /**
  * ============================================
@@ -45,6 +47,9 @@ const db = require('./src/config/database');
 
 // 创建 Express 应用实例
 const app = express();
+
+// Sealos/反向代理会设置 X-Forwarded-*，需要信任代理才能正确识别客户端 IP。
+app.set('trust proxy', 1);
 
 // 服务器端口配置
 const PORT = process.env.PORT || 3000;
@@ -59,10 +64,53 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
  */
 
 // CORS 跨域配置
+// 注意：credentials: true 时不能使用 '*' 作为 origin，浏览器会拒绝该组合
+const defaultOrigins = NODE_ENV === 'production'
+    ? (process.env.CORS_ORIGIN || 'https://wangshiyun.edu')
+    : (process.env.CORS_ORIGIN || 'http://localhost:3000');
+const allowedOrigins = defaultOrigins.split(',').map(origin => origin.trim()).filter(Boolean);
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
 }));
+
+const createLimiter = (windowMs, max, message) => rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, code: 429, message }
+});
+
+const writeRequestOnly = (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        return next();
+    }
+    return generalLimiter(req, res, next);
+};
+
+const generalLimiter = createLimiter(
+    parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
+    parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '3000', 10),
+    '请求过于频繁，请稍后再试'
+);
+const authLimiter = createLimiter(15 * 60 * 1000, 30, '登录/注册请求过于频繁，请稍后再试');
+const expensiveLimiter = createLimiter(60 * 1000, 12, '生成或导出请求过于频繁，请稍后再试');
+
+app.use('/api', writeRequestOnly);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/ai', expensiveLimiter);
+app.use('/api/lessons/generate', expensiveLimiter);
+app.use('/api/lessons/generate-aware', expensiveLimiter);
+app.use('/api/ppt/generate', expensiveLimiter);
+app.use('/api/ppt/sync', expensiveLimiter);
+app.use(/^\/api\/ppt\/[^/]+\/export$/, expensiveLimiter);
 
 // JSON 请求体解析（最大 10MB）
 app.use(express.json({ limit: '10mb' }));
@@ -70,12 +118,9 @@ app.use(express.json({ limit: '10mb' }));
 // URL 编码解析
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 静态文件服务 - 上传的文件（支持 CORS 以便 OnlyOffice 编辑器可以访问）
+// 静态文件服务 - 上传的资源文件
 const path = require('path');
-app.use('/uploads', (req, res, next) => {
-    res.set('Access-Control-Allow-Origin', '*');
-    next();
-}, express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /**
  * ============================================
@@ -187,11 +232,14 @@ try {
     app.use('/api/standard', require('./src/routes/standard'));
     console.log('✅ 新课标检测路由已加载: /api/standard');
 
-    app.use('/api/onlyoffice', require('./src/routes/onlyoffice'));
-    console.log('✅ ONLYOFFICE路由已加载: /api/onlyoffice');
-
     app.use('/api/knowledge-base', require('./src/routes/knowledgeBase'));
     console.log('✅ 知识库路由已加载: /api/knowledge-base');
+
+    app.use('/api/notifications', require('./src/routes/notifications'));
+    console.log('✅ 通知路由已加载: /api/notifications');
+
+    app.use('/api/admin', require('./src/routes/admin'));
+    console.log('✅ 管理员路由已加载: /api/admin');
 } catch (error) {
     console.log('⚠️ 部分路由加载失败:', error.message);
 }
@@ -252,6 +300,16 @@ const startServer = async () => {
 
         // 测试数据库连接
         console.log('📦 正在连接数据库...');
+        
+        // 先初始化数据库表结构
+        const dbInitialized = await initDatabase();
+        
+        if (dbInitialized) {
+            console.log('✅ 数据库表结构初始化成功');
+        } else {
+            console.log('⚠️ 数据库表结构初始化失败，服务将以受限模式运行');
+        }
+
         const dbConnected = await db.testConnection();
 
         if (dbConnected) {
@@ -321,6 +379,7 @@ process.on('uncaughtException', (error) => {
 // 监听未处理的 Promise 拒绝
 process.on('unhandledRejection', (reason) => {
     console.error('⚠️ 未处理的 Promise 拒绝:', reason);
+    gracefulShutdown('unhandledRejection');
 });
 
 /**

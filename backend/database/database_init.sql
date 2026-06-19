@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS portfolios (
     user_id INT NOT NULL COMMENT '所属用户ID',
     name VARCHAR(200) NOT NULL COMMENT '作品集名称',
     description TEXT COMMENT '作品集描述',
+    subject VARCHAR(50) COMMENT '学科',
+    stage VARCHAR(50) COMMENT '学段（教育阶段）',
+    grade VARCHAR(50) COMMENT '年级',
+    category VARCHAR(100) COMMENT '分类',
     cover_url VARCHAR(255) COMMENT '封面图片URL',
     lesson_ids JSON COMMENT '包含的教案ID列表',
     ppt_ids JSON COMMENT '包含的PPT ID列表',
@@ -93,6 +97,10 @@ CREATE TABLE IF NOT EXISTS portfolios (
     INDEX idx_is_public (is_public),
     INDEX idx_share_count (share_count),
     INDEX idx_created_at (created_at),
+    INDEX idx_subject (subject),
+    INDEX idx_stage (stage),
+    INDEX idx_grade (grade),
+    INDEX idx_category (category),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='作品集表';
 

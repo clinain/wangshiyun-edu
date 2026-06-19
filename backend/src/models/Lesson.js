@@ -334,10 +334,10 @@ class Lesson {
             const total = countResult.total;
 
             const listSql = `
-                SELECT id, user_id, title, subject, grade, views, created_at
+                SELECT id, user_id AS userId, title, subject, grade, view_count, created_at AS createdAt
                 FROM lessons
                 ${whereClause}
-                ORDER BY views DESC, created_at DESC
+                ORDER BY view_count DESC, created_at DESC
                 LIMIT ? OFFSET ?
             `;
             const lessons = await db.query(listSql, [...params, pageSize, offset]);
@@ -348,9 +348,7 @@ class Lesson {
                     page: parseInt(page),
                     pageSize: parseInt(pageSize),
                     total: parseInt(total),
-                    totalPages: Math.ceil(total / pageSize),
-                    hasNext: page * pageSize < total,
-                    hasPrev: page > 1
+                    totalPages: Math.ceil(total / pageSize)
                 }
             };
         } catch (error) {

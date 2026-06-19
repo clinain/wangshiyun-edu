@@ -7,6 +7,29 @@ const PPTRecord = require('../models/PPTRecord');
 const Lesson = require('../models/Lesson');
 const PPTService = require('../services/pptService');
 const AIService = require('../services/aiService');
+const HtmlDeckService = require('../services/htmlDeckService');
+
+const parsePPTContent = (contentJson) => {
+    if (!contentJson) {
+        console.log('❌ contentJson为空');
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(contentJson);
+        console.log('✅ 解析成功，pages长度:', parsed.pages?.length || 0);
+        return parsed;
+    } catch (e) {
+        console.log('❌ 解析失败:', e.message);
+        return contentJson;
+    }
+};
+
+const ensureHtmlDeck = (pptData, theme) => {
+    if (!pptData || typeof pptData !== 'object') return pptData;
+    return HtmlDeckService.withHtmlDeck(pptData, theme);
+};
+
+const encodeDownloadName = (filename) => encodeURIComponent(filename).replace(/%20/g, '+');
 
 /**
  * 从教案生成PPT
@@ -15,7 +38,7 @@ const AIService = require('../services/aiService');
 const generateFromLesson = async (req, res) => {
     try {
         const userId = req.user?.id;
-        const { lessonId, templateId, useAI = false } = req.body;
+        const { lessonId, templateId, useAI = false, theme } = req.body;
 
         // 验证用户登录状态
         if (!userId) {
@@ -88,6 +111,8 @@ const generateFromLesson = async (req, res) => {
             pptData = PPTService.generatePPT(lesson);
         }
 
+        pptData = ensureHtmlDeck(pptData, theme);
+
         // 保存PPT记录
         const pptRecord = await PPTRecord.create({
             userId,
@@ -107,6 +132,8 @@ const generateFromLesson = async (req, res) => {
                 title: pptData.title,
                 pageCount: pptData.pageCount,
                 pages: pptData.pages,
+                html: pptData.html,
+                format: pptData.format,
                 generatedByAI: useAI && AIService.isAvailable()
             }
         });
@@ -130,7 +157,7 @@ const generateFromLesson = async (req, res) => {
 const syncFromLesson = async (req, res) => {
     try {
         const userId = req.user?.id;
-        const { lessonId, templateId, useAI = false } = req.body;
+        const { lessonId, templateId, useAI = false, theme } = req.body;
 
         if (!userId) {
             return res.status(401).json({
@@ -184,17 +211,41 @@ const syncFromLesson = async (req, res) => {
             pptData = PPTService.generatePPT(lesson);
         }
 
+        // 调试：检查生成的PPT数据
+        console.log('🔍 生成的PPT数据:', JSON.stringify({
+            title: pptData.title,
+            pageCount: pptData.pageCount,
+            pagesLength: pptData.pages?.length || 0,
+            hasPages: !!pptData.pages
+        }));
+
+        pptData = ensureHtmlDeck(pptData, theme);
+
+        // 调试：检查处理后的PPT数据
+        console.log('🔍 处理后的PPT数据:', JSON.stringify({
+            title: pptData.title,
+            pageCount: pptData.pageCount,
+            pagesLength: pptData.pages?.length || 0,
+            hasPages: !!pptData.pages
+        }));
+
+        // 确保 pageCount 有值
+        const pageCount = pptData.pageCount || (pptData.pages ? pptData.pages.length : 0);
+        console.log(`📊 PPT页数: ${pageCount}`);
+
         const existingPPT = await PPTRecord.findByLessonId(lessonIdNum);
         
         let pptRecord;
         if (existingPPT) {
             console.log(`📝 更新已有PPT记录: ${existingPPT.id}`);
-            await PPTRecord.update(existingPPT.id, {
+            pptRecord = await PPTRecord.update(existingPPT.id, {
                 title: pptData.title,
                 contentJson: JSON.stringify(pptData),
-                pageCount: pptData.pageCount
+                pageCount: pageCount
             });
-            pptRecord = await PPTRecord.findById(existingPPT.id);
+            if (!pptRecord) {
+                throw new Error('更新PPT记录失败');
+            }
         } else {
             console.log(`🆕 创建新PPT记录`);
             pptRecord = await PPTRecord.create({
@@ -202,13 +253,30 @@ const syncFromLesson = async (req, res) => {
                 lessonId: lessonIdNum,
                 title: pptData.title,
                 contentJson: JSON.stringify(pptData),
-                pageCount: pptData.pageCount
+                pageCount: pageCount
             });
         }
 
         console.log(`✅ PPT同步成功，ID: ${pptRecord.id}`);
 
-        const content = pptRecord.contentJson ? JSON.parse(pptRecord.contentJson) : null;
+        console.log('🔍 准备解析contentJson:', pptRecord.contentJson?.substring(0, 100) + '...');
+        const content = ensureHtmlDeck(parsePPTContent(pptRecord.contentJson), theme);
+
+        console.log('🔍 content数据:', JSON.stringify({
+            hasContent: !!content,
+            hasPages: content && !!content.pages,
+            pagesLength: content && content.pages ? content.pages.length : 0,
+            pageCount: content && content.pageCount
+        }));
+
+        console.log('🔍 pptRecord数据:', JSON.stringify({
+            id: pptRecord.id,
+            lessonId: pptRecord.lessonId,
+            title: pptRecord.title,
+            pageCount: pptRecord.pageCount,
+            createdAt: pptRecord.createdAt,
+            updatedAt: pptRecord.updatedAt
+        }));
 
         res.json({
             success: true,
@@ -217,11 +285,11 @@ const syncFromLesson = async (req, res) => {
                 id: pptRecord.id,
                 lessonId: pptRecord.lessonId,
                 title: pptRecord.title,
-                pageCount: pptRecord.page_count,
-                status: pptRecord.page_count > 0 ? 'completed' : 'pending',
+                pageCount: pptRecord.pageCount,
+                status: pptRecord.pageCount > 0 ? 'completed' : 'pending',
                 content: content,
-                createdAt: pptRecord.created_at,
-                updatedAt: pptRecord.updated_at
+                createdAt: pptRecord.createdAt,
+                updatedAt: pptRecord.updatedAt
             }
         });
 
@@ -318,15 +386,9 @@ const getPPTDetail = async (req, res) => {
         // 未登录用户通过路由守卫处理
 
         // 解析content_json
-        let content = null;
-        if (ppt.contentJson) {
-            try {
-                content = JSON.parse(ppt.contentJson);
-                console.log('✅ PPT内容解析成功');
-            } catch (e) {
-                console.error('❌ PPT内容解析失败:', e.message);
-                content = ppt.contentJson;
-            }
+        let content = ensureHtmlDeck(parsePPTContent(ppt.contentJson));
+        if (content) {
+            console.log('✅ PPT内容解析成功');
         } else {
             console.warn('⚠️ PPT内容为空');
         }
@@ -390,8 +452,9 @@ const updatePPT = async (req, res) => {
             const content = typeof updateData.content === 'string'
                 ? JSON.parse(updateData.content)
                 : updateData.content;
-            updateData.contentJson = JSON.stringify(content);
-            updateData.pageCount = content.pages ? content.pages.length : 0;
+            const contentWithHtml = ensureHtmlDeck(content);
+            updateData.contentJson = JSON.stringify(contentWithHtml);
+            updateData.pageCount = contentWithHtml.pages ? contentWithHtml.pages.length : 0;
         }
 
         // 更新PPT
@@ -509,19 +572,12 @@ const exportPPT = async (req, res) => {
         }
 
         // 解析内容
-        let content = null;
-        if (ppt.contentJson) {
-            try {
-                content = JSON.parse(ppt.contentJson);
-            } catch {
-                content = ppt.contentJson;
-            }
-        }
+        const content = ensureHtmlDeck(parsePPTContent(ppt.contentJson));
 
         if (format === 'html') {
-            const html = PPTService.exportToHTML(content);
+            const html = content.html || HtmlDeckService.toHTML(content);
             res.setHeader('Content-Type', 'text/html');
-            res.setHeader('Content-Disposition', `attachment; filename="${ppt.title}.html"`);
+            res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeDownloadName(`${ppt.title}.html`)}`);
             res.send(html);
         } else {
             res.json({
@@ -536,81 +592,6 @@ const exportPPT = async (req, res) => {
             success: false,
             code: 500,
             message: '导出失败'
-        });
-    }
-};
-
-/**
- * 创建自定义PPT（不需要关联教案）
- * POST /api/ppt/create-custom
- */
-const createCustomPPT = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        const { title, pages = [], templateStyle = 'default' } = req.body;
-
-        // 验证用户登录状态
-        if (!userId) {
-            return res.status(401).json({
-                success: false,
-                code: 401,
-                message: '用户未登录，请先登录'
-            });
-        }
-
-        // 验证必填字段
-        if (!title || !title.trim()) {
-            return res.status(400).json({
-                success: false,
-                code: 400,
-                message: '请提供PPT标题'
-            });
-        }
-
-        // 构建PPT内容数据
-        const pptData = {
-            title: title.trim(),
-            templateStyle,
-            pages: pages.map((page, index) => ({
-                type: page.type || 'content',
-                title: page.title || `第${index + 1}页`,
-                content: page.content || { mainContent: '', layout: 'text' },
-                layout: page.layout || 'process',
-                notes: page.notes || ''
-            })),
-            pageCount: pages.length,
-            createdAt: new Date().toISOString()
-        };
-
-        // 保存PPT记录（不关联教案，lessonId为null）
-        const pptRecord = await PPTRecord.create({
-            userId,
-            lessonId: null,
-            title: title.trim(),
-            contentJson: JSON.stringify(pptData),
-            pageCount: pages.length
-        });
-
-        console.log(`✅ 自定义PPT创建成功，ID: ${pptRecord.id}`);
-
-        res.status(201).json({
-            success: true,
-            message: 'PPT创建成功',
-            data: {
-                id: pptRecord.id,
-                title: title.trim(),
-                pageCount: pages.length,
-                pages: pptData.pages,
-                templateStyle
-            }
-        });
-
-    } catch (error) {
-        console.error('❌ 创建自定义PPT错误:', error);
-        res.status(500).json({
-            success: false,
-            code: 500,
-            message: `创建PPT失败: ${error.message}`
         });
     }
 };
@@ -663,7 +644,6 @@ const checkTitle = async (req, res) => {
 module.exports = {
     generateFromLesson,
     syncFromLesson,
-    createCustomPPT,
     checkTitle,
     getPPTList,
     getPPTDetail,
@@ -671,4 +651,3 @@ module.exports = {
     deletePPT,
     exportPPT
 };
-

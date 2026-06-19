@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { commentAPI } from '@/api';
 import type { CommentItem, CommentStats } from '@/api';
 import { useAuth } from '@/context/AuthContext';
@@ -10,27 +11,23 @@ interface CommentSectionProps {
 
 const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId }) => {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const highlightCommentId = searchParams.get('commentId');
   const [comments, setComments] = useState<CommentItem[]>([]);
   const [stats, setStats] = useState<CommentStats>({ totalComments: 0, totalQuestions: 0, totalReviews: 0, totalDiscussions: 0 });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [newComment, setNewComment] = useState('');
-  const [replyTo, setReplyTo] = useState<CommentItem | null>(null);
+  const [replyTo, setReplyTo] = useState<number | null>(null);
   const [replyContent, setReplyContent] = useState('');
   const [expandedReplies, setExpandedReplies] = useState<number[]>([]);
   const [repliesMap, setRepliesMap] = useState<Record<number, CommentItem[]>>({});
+  const [nestedRepliesMap, setNestedRepliesMap] = useState<Record<number, CommentItem[]>>({});
 
   const entityType = portfolioId ? 'portfolios' : 'resources';
   const entityId = portfolioId || resourceId;
 
-  useEffect(() => {
-    if (entityId) {
-      fetchComments();
-      fetchStats();
-    }
-  }, [entityId]);
-
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     setLoading(true);
     try {
       const result = await commentAPI.list(entityType, entityId!, {
@@ -43,16 +40,38 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
     } finally {
       setLoading(false);
     }
-  };
+  }, [entityType, entityId]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const result = await commentAPI.getStats(entityType, entityId!);
       setStats(result);
     } catch (error) {
       console.error('获取评论统计失败:', error);
     }
-  };
+  }, [entityType, entityId]);
+
+  useEffect(() => {
+    if (entityId) {
+      fetchComments();
+      fetchStats();
+    }
+  }, [entityId, fetchComments, fetchStats]);
+
+  // 自动滚动到高亮评论
+  useEffect(() => {
+    if (highlightCommentId && comments.length > 0) {
+      const targetId = parseInt(highlightCommentId);
+      setTimeout(() => {
+        const element = document.getElementById(`comment-${targetId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('highlight-comment');
+          setTimeout(() => element.classList.remove('highlight-comment'), 3000);
+        }
+      }, 500);
+    }
+  }, [highlightCommentId, comments]);
 
   const fetchReplies = async (commentId: number) => {
     try {
@@ -74,6 +93,8 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
       setNewComment('');
       fetchComments();
       fetchStats();
+      // 通知发布者：触发通知铃铛立即刷新
+      window.dispatchEvent(new Event('notification-refresh'));
     } catch (error) {
       console.error('发表评论失败:', error);
       alert('发表失败，请重试');
@@ -93,7 +114,26 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
       });
       setReplyContent('');
       setReplyTo(null);
-      fetchReplies(parentId);
+      // 通知被回复者：触发通知铃铛立即刷新
+      window.dispatchEvent(new Event('notification-refresh'));
+
+      // 判断是对评论的回复还是对回复的回复
+      const isReplyToReply = comments.every(c => c.id !== parentId);
+      if (isReplyToReply) {
+        // 对回复的回复：刷新父评论的回复列表
+        const parentComment = comments.find(c =>
+          repliesMap[c.id]?.some(r => r.id === parentId)
+        );
+        if (parentComment) {
+          fetchReplies(parentComment.id);
+          // 刷新嵌套回复
+          fetchNestedReplies(parentId);
+        }
+      } else {
+        // 对评论的回复：刷新评论的回复列表
+        fetchReplies(parentId);
+      }
+      fetchComments();
       fetchStats();
     } catch (error) {
       console.error('回复失败:', error);
@@ -109,6 +149,14 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
       await commentAPI.delete(commentId);
       fetchComments();
       fetchStats();
+      // 如果删除的是回复，刷新所有已展开的回复列表
+      for (const expandedId of expandedReplies) {
+        fetchReplies(expandedId);
+        // 同时刷新嵌套回复
+        if (nestedRepliesMap[expandedId]) {
+          fetchNestedReplies(expandedId);
+        }
+      }
     } catch (error) {
       console.error('删除评论失败:', error);
       alert('删除失败，请重试');
@@ -126,10 +174,40 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
     }
   };
 
+  // 获取嵌套回复（二级回复）
+  const fetchNestedReplies = async (replyId: number) => {
+    try {
+      const result = await commentAPI.getReplies(replyId, { page: 1, pageSize: 50 });
+      setNestedRepliesMap(prev => ({ ...prev, [replyId]: result.replies || [] }));
+    } catch (error) {
+      console.error('获取嵌套回复失败:', error);
+    }
+  };
+
+  // 切换嵌套回复的展开/收起
+  const toggleNestedReplies = async (replyId: number) => {
+    if (expandedReplies.includes(replyId)) {
+      setExpandedReplies(prev => prev.filter(id => id !== replyId));
+    } else {
+      setExpandedReplies(prev => [...prev, replyId]);
+      if (!nestedRepliesMap[replyId]) {
+        await fetchNestedReplies(replyId);
+      }
+    }
+  };
+
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    const parseDate = (value: string) => {
+      if (!value) return new Date(NaN);
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+        return new Date(value.replace(' ', 'T') + '+08:00');
+      }
+      return new Date(value);
+    };
+    const date = parseDate(dateStr);
+    if (isNaN(date.getTime())) return dateStr || '-';
     const now = new Date();
-    const diff = now.getTime() - date.getTime();
+    const diff = Math.max(0, now.getTime() - date.getTime());
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
@@ -201,7 +279,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
           </div>
         ) : (
           comments.map((comment) => (
-            <div key={comment.id} className="p-4 md:p-6 hover:bg-gray-50 transition-colors">
+            <div key={comment.id} id={`comment-${comment.id}`} className="p-4 md:p-6 hover:bg-gray-50 transition-colors">
               <div className="flex gap-3">
                 <div className="w-10 h-10 bg-gradient-to-br from-primary-200 to-primary-400 rounded-full flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-sm font-bold">
@@ -228,7 +306,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
                     {user && (
                       <button
                         onClick={() => {
-                          setReplyTo(replyTo?.id === comment.id ? null : comment);
+                          setReplyTo(replyTo === comment.id ? null : comment.id);
                           setReplyContent('');
                         }}
                         className="text-xs text-gray-500 hover:text-pink-500 transition-colors"
@@ -241,13 +319,13 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
                         onClick={() => toggleReplies(comment.id)}
                         className="text-xs text-pink-500 hover:text-pink-600 transition-colors"
                       >
-                        {expandedReplies.includes(comment.id) ? '收起回复' : `查看回复 (${comment.replyCount})`}
+                        {expandedReplies.includes(comment.id) ? '收起回复' : '查看回复'}
                       </button>
                     )}
                   </div>
 
                   {/* 回复输入框 */}
-                  {replyTo?.id === comment.id && (
+                  {replyTo === comment.id && (
                     <div className="mt-3 flex gap-2">
                       <input
                         type="text"
@@ -255,7 +333,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
                         onChange={(e) => setReplyContent(e.target.value)}
                         placeholder={`回复 ${comment.userName}...`}
                         className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        onKeyPress={(e) => {
+                        onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             handleSubmitReply(comment.id);
@@ -285,6 +363,11 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-gray-800 text-xs">{reply.userName}</span>
+                              {reply.replyToUserName && reply.replyToUserName !== reply.userName && (
+                                <span className="text-xs text-gray-400">
+                                  回复 <span className="text-pink-400">@{reply.replyToUserName}</span>
+                                </span>
+                              )}
                               <span className="text-xs text-gray-400">{formatDate(reply.createdAt)}</span>
                               {user && user.id === reply.userId && (
                                 <button
@@ -296,6 +379,92 @@ const CommentSection: React.FC<CommentSectionProps> = ({ resourceId, portfolioId
                               )}
                             </div>
                             <p className="text-xs text-gray-700 mt-0.5">{reply.content}</p>
+
+                            {/* 操作栏 - 回复按钮 */}
+                            <div className="flex items-center gap-4 mt-1">
+                              {user && (
+                                <button
+                                  onClick={() => {
+                                    setReplyTo(replyTo === reply.id ? null : reply.id);
+                                    setReplyContent('');
+                                  }}
+                                  className="text-xs text-gray-400 hover:text-pink-500 transition-colors"
+                                >
+                                  💬 回复
+                                </button>
+                              )}
+                              {user && user.id === reply.userId && (
+                                <button
+                                  onClick={() => handleDeleteComment(reply.id)}
+                                  className="text-xs text-red-400 hover:text-red-600"
+                                >
+                                  删除
+                                </button>
+                              )}
+                            </div>
+
+                            {/* 回复输入框（对回复进行回复） */}
+                            {replyTo === reply.id && (
+                              <div className="mt-2 flex gap-2">
+                                <input
+                                  type="text"
+                                  value={replyContent}
+                                  onChange={(e) => setReplyContent(e.target.value)}
+                                  placeholder={`回复 ${reply.userName}...`}
+                                  className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault();
+                                      handleSubmitReply(reply.id);
+                                    }
+                                  }}
+                                />
+                                <button
+                                  onClick={() => handleSubmitReply(reply.id)}
+                                  disabled={!replyContent.trim() || submitting}
+                                  className="px-3 py-2 bg-pink-500 text-white text-xs rounded-lg hover:bg-pink-600 disabled:bg-gray-300 transition-colors"
+                                >
+                                  回复
+                                </button>
+                              </div>
+                            )}
+
+                            {/* 嵌套回复列表（二级回复） */}
+                            {expandedReplies.includes(reply.id) && nestedRepliesMap[reply.id] && (
+                              <div className="mt-2 ml-1 pl-3 border-l-2 border-pink-100 space-y-2">
+                                {nestedRepliesMap[reply.id].map((nestedReply) => (
+                                  <div key={nestedReply.id} className="flex gap-2">
+                                    <div className="w-5 h-5 bg-gradient-to-br from-pink-200 to-pink-300 rounded-full flex items-center justify-center flex-shrink-0">
+                                      <span className="text-white text-[10px] font-bold">
+                                        {nestedReply.userName?.charAt(0) || 'U'}
+                                      </span>
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium text-gray-800 text-[11px]">{nestedReply.userName}</span>
+                                        {nestedReply.replyToUserName && nestedReply.replyToUserName !== nestedReply.userName && (
+                                          <span className="text-[11px] text-gray-400">
+                                            回复 <span className="text-pink-400">@{nestedReply.replyToUserName}</span>
+                                          </span>
+                                        )}
+                                        <span className="text-[11px] text-gray-400">{formatDate(nestedReply.createdAt)}</span>
+                                      </div>
+                                      <p className="text-[11px] text-gray-700 mt-0.5">{nestedReply.content}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* 查看嵌套回复按钮 */}
+                            {(reply.childReplyCount || 0) > 0 && (
+                              <button
+                                onClick={() => toggleNestedReplies(reply.id)}
+                                className="mt-1 text-[11px] text-pink-500 hover:text-pink-600 transition-colors"
+                              >
+                                {expandedReplies.includes(reply.id) ? '收起回复' : `查看回复 (${reply.childReplyCount})`}
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}

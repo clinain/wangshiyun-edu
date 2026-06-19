@@ -75,7 +75,7 @@ class User {
      */
     static async findById(id) {
         const sql = `
-            SELECT id, username, name, phone, email, role, school, avatar, created_at, updated_at
+            SELECT id, username, password, name, phone, email, role, school, avatar, created_at, updated_at
             FROM users
             WHERE id = ?
         `;
@@ -98,7 +98,7 @@ class User {
         const fields = [];
         const values = [];
 
-        const allowedFields = ['name', 'phone', 'email', 'school', 'avatar'];
+        const allowedFields = ['name', 'phone', 'email', 'school', 'avatar', 'password'];
 
         for (const [key, value] of Object.entries(userData)) {
             if (allowedFields.includes(key) && value !== undefined) {
@@ -199,6 +199,26 @@ class User {
     }
 
     /**
+     * 根据邮箱查找用户
+     * @param {string} email 邮箱
+     * @returns {Promise<Object|null>} 用户信息
+     */
+    static async findByEmail(email) {
+        const sql = `
+            SELECT id, username, password, name, phone, email, role, school, avatar, created_at, updated_at
+            FROM users
+            WHERE email = ?
+        `;
+
+        try {
+            const results = await db.query(sql, [email]);
+            return results[0] || null;
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    /**
      * 获取下一个可用的用户名（纯编号）
      * @returns {Promise<string>} 下一个用户名
      */
@@ -236,6 +256,113 @@ class User {
             console.error('User.getNextUsername 错误:', error);
             throw error;
         }
+    }
+
+    /**
+     * 安全查询：根据ID查询用户（排除密码字段）
+     */
+    static async findByIdSafe(id) {
+        const sql = `
+            SELECT id, username, name, phone, email, role, school, avatar,
+                   status, created_at, updated_at
+            FROM users WHERE id = ?
+        `;
+        const results = await db.query(sql, [id]);
+        return results[0] || null;
+    }
+
+    /**
+     * 分页查询用户列表（排除密码）
+     */
+    static async findAll({ page = 1, pageSize = 20, keyword, role, status } = {}) {
+        let whereConditions = [];
+        let params = [];
+        
+        if (keyword) {
+            whereConditions.push('(username LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ?)');
+            const keywordParam = `%${keyword}%`;
+            params.push(keywordParam, keywordParam, keywordParam, keywordParam);
+        }
+        
+        if (role) {
+            whereConditions.push('role = ?');
+            params.push(role);
+        }
+        
+        if (status !== undefined && status !== null) {
+            whereConditions.push('status = ?');
+            params.push(status);
+        }
+        
+        const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+        
+        const countSql = `SELECT COUNT(*) as total FROM users ${whereClause}`;
+        const countResult = await db.query(countSql, params);
+        const total = countResult[0].total;
+        
+        const offset = (page - 1) * pageSize;
+        const sql = `
+            SELECT id, username, name, phone, email, role, school, avatar,
+                   status, created_at, updated_at
+            FROM users ${whereClause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        `;
+        const users = await db.query(sql, [...params, pageSize, offset]);
+        
+        return {
+            users,
+            pagination: {
+                page: parseInt(page),
+                pageSize: parseInt(pageSize),
+                total,
+                totalPages: Math.ceil(total / pageSize)
+            }
+        };
+    }
+
+    /**
+     * 统计各角色用户数量
+     */
+    static async countByRole() {
+        const sql = `
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN role = 'student' THEN 1 ELSE 0 END) as studentCount,
+                SUM(CASE WHEN role = 'teacher' THEN 1 ELSE 0 END) as teacherCount,
+                SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as adminCount,
+                SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as activeCount
+            FROM users
+        `;
+        const results = await db.query(sql);
+        return results[0];
+    }
+
+    /**
+     * 更新用户状态
+     */
+    static async updateStatus(id, status) {
+        const sql = 'UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+        await db.query(sql, [status, id]);
+        return true;
+    }
+
+    /**
+     * 更新用户角色
+     */
+    static async updateRole(id, role) {
+        const sql = 'UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+        await db.query(sql, [role, id]);
+        return true;
+    }
+
+    /**
+     * 删除用户（根据ID）
+     */
+    static async deleteById(id) {
+        const sql = 'DELETE FROM users WHERE id = ?';
+        await db.query(sql, [id]);
+        return true;
     }
 }
 

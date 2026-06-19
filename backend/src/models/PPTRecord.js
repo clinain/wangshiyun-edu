@@ -36,12 +36,23 @@ class PPTRecord {
                 pageCount || 0
             ]);
 
-            return {
+            console.log('🔍 PPTRecord.create返回:', JSON.stringify({
                 id: result.insertId,
                 userId,
                 lessonId,
                 title,
                 pageCount
+            }));
+
+            return {
+                id: result.insertId,
+                userId,
+                lessonId,
+                title,
+                contentJson,
+                pageCount,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
             };
         } catch (error) {
             console.error('PPTRecord.create 错误:', error);
@@ -174,7 +185,7 @@ class PPTRecord {
      * 更新PPT记录
      * @param {number} id PPT记录ID
      * @param {Object} data 更新数据
-     * @returns {Promise<boolean>} 是否更新成功
+     * @returns {Promise<Object|null>} 更新后的PPT信息，失败返回null
      */
     static async update(id, data) {
         const fields = [];
@@ -195,7 +206,7 @@ class PPTRecord {
         }
 
         if (fields.length === 0) {
-            return false;
+            return null;
         }
 
         fields.push('updated_at = NOW()');
@@ -205,7 +216,11 @@ class PPTRecord {
 
         try {
             const result = await db.query(sql, values);
-            return result.affectedRows > 0;
+            if (result.affectedRows > 0) {
+                // 返回更新后的数据
+                return this.findById(id);
+            }
+            return null;
         } catch (error) {
             console.error('PPTRecord.update 错误:', error);
             throw error;

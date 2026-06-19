@@ -94,7 +94,7 @@ const Dashboard: React.FC = () => {
 
         <div className="text-center w-full px-4">
           <button
-            onClick={() => navigate('/lessons/create')}
+            onClick={() => navigate('/teaching-preparation')}
             className="w-full sm:w-auto px-8 md:px-12 py-3 md:py-4 bg-primary-300 text-white rounded-full font-semibold text-base md:text-lg shadow-md hover:shadow-lg hover:-translate-y-1 transition-all duration-300 hover:bg-primary-400"
             style={{ letterSpacing: '0.05em' }}
           >

@@ -28,7 +28,7 @@ const zhipuClient = axios.create({
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${ZHIPU_API_KEY}`
   },
-  timeout: 120000
+  timeout: 300000  // 超时时间300秒（5分钟），AI生成详细PPT内容（含图片搜索）需要90-215秒
 });
 
 const generateChatCompletion = async (messages, options = {}) => {

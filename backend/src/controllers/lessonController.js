@@ -6,6 +6,176 @@
 const Lesson = require('../models/Lesson');
 const AIService = require('../services/aiService');
 const { generateLessonPlan, getSubjectsList } = require('../services/lessonPlanService');
+const PdfExportService = require('../services/pdfExportService');
+const ExportService = require('../services/exportService');
+
+// ==================== 教学目标数据格式转换工具 ====================
+
+/**
+ * 将旧版扁平数组格式转换为新格式
+ * @param {string[]} goalsArray 旧格式教学目标数组
+ * @returns {Object} 新格式教学目标
+ */
+const convertLegacyArrayGoals = (goalsArray) => {
+  if (!goalsArray || goalsArray.length === 0) {
+    return { version: 2, dimensions: [] };
+  }
+
+  const dimensionMap = {};
+  const generalGoals = [];
+
+  goalsArray.forEach(goal => {
+    const str = typeof goal === 'string' ? goal : String(goal);
+    const match = str.match(/^([^：:]+)[：:](.+)/);
+    if (match) {
+      const dimName = match[1].trim();
+      const goalContent = match[2].trim();
+      if (!dimensionMap[dimName]) {
+        dimensionMap[dimName] = [];
+      }
+      dimensionMap[dimName].push(goalContent);
+    } else {
+      generalGoals.push(str);
+    }
+  });
+
+  const dimensions = [];
+  for (const [name, goals] of Object.entries(dimensionMap)) {
+    dimensions.push({
+      id: name.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '_'),
+      name,
+      goals
+    });
+  }
+
+  if (generalGoals.length > 0 && dimensions.length === 0) {
+    dimensions.push({
+      id: 'general',
+      name: '教学目标',
+      goals: generalGoals
+    });
+  } else if (generalGoals.length > 0) {
+    dimensions.push({
+      id: 'general',
+      name: '综合目标',
+      goals: generalGoals
+    });
+  }
+
+  return { version: 2, dimensions };
+};
+
+/**
+ * 将旧版 knowledge/ability/emotion 对象格式转换为新格式
+ * @param {Object} obj 旧格式教学目标对象
+ * @returns {Object} 新格式教学目标
+ */
+const convertLegacyObjectGoals = (obj) => {
+  const dimensions = [];
+  const mapping = {
+    knowledge: { id: 'knowledge', name: '知识与技能' },
+    ability: { id: 'ability', name: '过程与方法' },
+    emotion: { id: 'emotion', name: '情感态度与价值观' }
+  };
+
+  for (const [key, config] of Object.entries(mapping)) {
+    if (obj[key] && Array.isArray(obj[key]) && obj[key].length > 0) {
+      dimensions.push({
+        id: config.id,
+        name: config.name,
+        goals: obj[key]
+      });
+    }
+  }
+
+  return { version: 2, dimensions };
+};
+
+/**
+ * 格式化教学目标数据用于存储
+ * 支持新旧两种格式输入，统一存储为新格式
+ * @param {*} teachingGoals 教学目标数据
+ * @returns {string|null} JSON字符串
+ */
+const formatTeachingGoalsForStorage = (teachingGoals) => {
+  if (!teachingGoals) return null;
+
+  // 如果已经是新格式（对象且有dimensions字段）
+  if (typeof teachingGoals === 'object' && !Array.isArray(teachingGoals) && teachingGoals.dimensions) {
+    return JSON.stringify(teachingGoals);
+  }
+
+  // 如果是字符串
+  if (typeof teachingGoals === 'string') {
+    try {
+      const parsed = JSON.parse(teachingGoals);
+      if (Array.isArray(parsed)) {
+        return JSON.stringify(convertLegacyArrayGoals(parsed));
+      }
+      if (parsed && parsed.dimensions) {
+        return JSON.stringify(parsed);
+      }
+      if (parsed && (parsed.knowledge || parsed.ability || parsed.emotion)) {
+        return JSON.stringify(convertLegacyObjectGoals(parsed));
+      }
+    } catch {
+      return JSON.stringify({
+        version: 2,
+        dimensions: [{
+          id: 'general',
+          name: '教学目标',
+          goals: teachingGoals.split('\n').filter(l => l.trim())
+        }]
+      });
+    }
+  }
+
+  if (Array.isArray(teachingGoals)) {
+    return JSON.stringify(convertLegacyArrayGoals(teachingGoals));
+  }
+
+  return JSON.stringify(teachingGoals);
+};
+
+/**
+ * 格式化教学目标数据用于前端展示
+ * 确保返回的数据格式统一为新格式
+ * @param {*} teachingGoals 教学目标数据
+ * @returns {Object} 新格式教学目标对象
+ */
+const formatTeachingGoalsForDisplay = (teachingGoals) => {
+  if (!teachingGoals) return { version: 2, dimensions: [] };
+
+  let data = teachingGoals;
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return {
+        version: 2,
+        dimensions: [{
+          id: 'general',
+          name: '教学目标',
+          goals: data.split('\n').filter(l => l.trim())
+        }]
+      };
+    }
+  }
+
+  if (data && typeof data === 'object' && data.dimensions) {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return convertLegacyArrayGoals(data);
+  }
+
+  if (data && typeof data === 'object' && (data.knowledge || data.ability || data.emotion)) {
+    return convertLegacyObjectGoals(data);
+  }
+
+  return { version: 2, dimensions: [] };
+};
 
 /**
  * 创建教案
@@ -198,10 +368,16 @@ const getLessonDetail = async (req, res) => {
         // 登录用户可以查看所有教案
         // 未登录用户通过路由守卫处理
 
+        // 格式化教学目标为统一的新格式
+        const formattedLesson = {
+            ...lesson,
+            teachingGoals: formatTeachingGoalsForDisplay(lesson.teachingGoals)
+        };
+
         res.json({
             success: true,
             message: '获取教案详情成功',
-            data: lesson
+            data: formattedLesson
         });
 
     } catch (error) {
@@ -409,15 +585,38 @@ const generateByAI = async (req, res) => {
         // 构建教案标题
         const lessonTitle = title || `${grade}${subject} - ${topic}教案`;
 
-        // 不自动保存，返回生成的内容让用户决定是否保存
+        // 自动保存到数据库（统一转换为新格式存储）
+        const teachingGoals = formatTeachingGoalsForStorage(aiResult.teachingGoals);
+        const keyPoints = JSON.stringify(aiResult.keyPoints || []);
+        const teachingProcess = JSON.stringify(aiResult.teachingProcess || {});
+
+        const lesson = await Lesson.create({
+            userId,
+            title: lessonTitle,
+            subject,
+            grade,
+            teachingGoals,
+            keyPoints,
+            teachingProcess,
+            assignments: aiResult.assignments || '',
+            summary: aiResult.summary || '',
+            status: 'draft'
+        });
+
+        console.log(`✅ 教案已自动保存，ID: ${lesson.id}`);
+
+        // 返回格式化后的教学目标
+        const displayGoals = formatTeachingGoalsForDisplay(aiResult.teachingGoals);
+
         res.status(201).json({
             success: true,
-            message: isMock ? '教案生成成功（使用模拟数据）' : '教案生成成功',
+            message: isMock ? '教案生成并保存成功（使用模拟数据）' : '教案生成并保存成功',
             data: {
+                id: lesson.id,
                 title: lessonTitle,
                 subject: subject,
                 grade: grade,
-                teachingGoals: aiResult.teachingGoals,
+                teachingGoals: displayGoals,
                 keyPoints: aiResult.keyPoints,
                 teachingProcess: aiResult.teachingProcess,
                 assignments: aiResult.assignments,
@@ -498,11 +697,46 @@ const generateSubjectAwareLesson = async (req, res) => {
         const lessonTitle = title || `${grade}${subject} - ${topic}教案`;
         const lessonPlan = result.data;
 
+        // 统一转换教学目标为新格式存储
+        const teachingGoals = formatTeachingGoalsForStorage(lessonPlan.teachingGoals);
+        const keyPointsObj = lessonPlan.teachingKeyPoints || {};
+        const keyPointsList = [
+            ...(keyPointsObj.key || []),
+            ...(keyPointsObj.difficult || [])
+        ];
+
+        const keyPoints = JSON.stringify(keyPointsList);
+        const teachingProcess = JSON.stringify(lessonPlan.teachingProcess || {});
+        const assignments = Array.isArray(lessonPlan.homework)
+            ? lessonPlan.homework.join('\n')
+            : (lessonPlan.homework || '');
+
+        // 自动保存到数据库
+        const lesson = await Lesson.create({
+            userId,
+            title: lessonTitle,
+            subject,
+            grade,
+            teachingGoals,
+            keyPoints,
+            teachingProcess,
+            assignments,
+            summary: '',
+            status: 'draft'
+        });
+
+        console.log(`✅ 教案已自动保存，ID: ${lesson.id}`);
+
+        // 返回格式化后的教学目标给前端
+        const displayGoals = formatTeachingGoalsForDisplay(lessonPlan.teachingGoals);
+
         res.status(201).json({
             success: true,
-            message: '教案生成成功',
+            message: '教案生成并保存成功',
             data: {
+                id: lesson.id,
                 ...lessonPlan,
+                teachingGoals: displayGoals,
                 title: lessonTitle,
                 subject: subject,
                 grade: grade,
@@ -562,6 +796,7 @@ const getAvailableSubjects = async (req, res) => {
 const exportLesson = async (req, res) => {
     try {
         const { id } = req.params;
+        const format = (req.query.format || 'docx').toLowerCase();
         const userId = req.user?.id;
 
         const lesson = await Lesson.findById(id);
@@ -583,7 +818,47 @@ const exportLesson = async (req, res) => {
             });
         }
 
-        // 生成Word文档内容
+        const safeTitle = (lesson.title || '教案').replace(/[\/\\?%*:|"<>]/g, '_');
+
+        // ==================== PDF 导出 ====================
+        if (format === 'pdf') {
+            try {
+                // 生成 HTML 内容
+                const html = generateLessonHTML(lesson);
+                // 使用 pdfExportService 将 HTML 渲染为 PDF
+                const pdfBuffer = await PdfExportService.renderHTMLToPDF(html);
+                if (!pdfBuffer) {
+                    return res.status(500).json({
+                        success: false,
+                        code: 500,
+                        message: 'PDF 渲染失败，请检查服务端是否已安装 Chromium 浏览器'
+                    });
+                }
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.pdf"`);
+                res.setHeader('Content-Length', pdfBuffer.length);
+                return res.send(pdfBuffer);
+            } catch (pdfErr) {
+                console.error('PDF导出错误:', pdfErr.message);
+                return res.status(pdfErr.statusCode || 500).json({
+                    success: false,
+                    code: pdfErr.statusCode || 500,
+                    message: pdfErr.message || 'PDF导出失败',
+                    errorCode: pdfErr.code
+                });
+            }
+        }
+
+        // ==================== DOCX 导出 ====================
+        if (format === 'docx') {
+            const docxBuffer = await ExportService.generateLessonDocx(lesson);
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.docx"`);
+            res.setHeader('Content-Length', docxBuffer.length);
+            return res.send(docxBuffer);
+        }
+
+        // ==================== 默认：纯文本回退 ====================
         let content = `教案标题：${lesson.title}\n\n`;
         content += `学科：${lesson.subject}\n`;
         content += `年级：${lesson.grade}\n`;
@@ -592,10 +867,17 @@ const exportLesson = async (req, res) => {
         content += `一、教学目标\n`;
         if (lesson.teachingGoals) {
             try {
-                const goals = JSON.parse(lesson.teachingGoals);
-                goals.forEach((goal, index) => {
-                    content += `${index + 1}. ${goal}\n`;
-                });
+                const goalsData = formatTeachingGoalsForDisplay(lesson.teachingGoals);
+                if (goalsData && goalsData.dimensions && goalsData.dimensions.length > 0) {
+                    goalsData.dimensions.forEach((dim) => {
+                        content += `\n【${dim.name}】\n`;
+                        dim.goals.forEach((goal, goalIndex) => {
+                            content += `  ${goalIndex + 1}. ${goal}\n`;
+                        });
+                    });
+                } else {
+                    content += `${lesson.teachingGoals}\n`;
+                }
             } catch {
                 content += `${lesson.teachingGoals}\n`;
             }
@@ -626,11 +908,9 @@ const exportLesson = async (req, res) => {
 
         content += `\n---\n网师云 - 师范生备课辅助系统\n`;
 
-        // 设置响应头
-        res.setHeader('Content-Type', 'application/msword');
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(lesson.title)}.doc"`);
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.txt"`);
         res.setHeader('Content-Length', Buffer.byteLength(content, 'utf8'));
-
         res.send(content);
 
     } catch (error) {
@@ -642,6 +922,187 @@ const exportLesson = async (req, res) => {
         });
     }
 };
+
+/**
+ * 将教案数据转换为 HTML 页面，供 PDF 渲染使用
+ */
+function generateLessonHTML(lesson) {
+    // 教学目标
+    let goalsHTML = '';
+    if (lesson.teachingGoals) {
+        try {
+            const goalsData = formatTeachingGoalsForDisplay(lesson.teachingGoals);
+            if (goalsData && goalsData.dimensions && goalsData.dimensions.length > 0) {
+                goalsData.dimensions.forEach((dim) => {
+                    goalsHTML += `<div class="goal-group">`;
+                    goalsHTML += `<div class="goal-title">${escapeHTML(dim.name)}</div>`;
+                    dim.goals.forEach((goal, i) => {
+                        goalsHTML += `<div class="goal-item"><span class="badge">${i + 1}</span> ${escapeHTML(goal)}</div>`;
+                    });
+                    goalsHTML += `</div>`;
+                });
+            } else {
+                goalsHTML = `<div class="goal-item">${escapeHTML(String(lesson.teachingGoals))}</div>`;
+            }
+        } catch {
+            goalsHTML = `<div class="goal-item">${escapeHTML(String(lesson.teachingGoals))}</div>`;
+        }
+    }
+
+    // 教学重点
+    let keyPointsHTML = '';
+    if (lesson.keyPoints) {
+        try {
+            const points = JSON.parse(lesson.keyPoints);
+            points.forEach((point, i) => {
+                keyPointsHTML += `<div class="goal-item"><span class="badge green">${i + 1}</span> ${escapeHTML(point)}</div>`;
+            });
+        } catch {
+            keyPointsHTML = `<div class="goal-item">${escapeHTML(String(lesson.keyPoints))}</div>`;
+        }
+    }
+
+    // 教学过程
+    let processHTML = '';
+    if (lesson.teachingProcess) {
+        try {
+            const processObj = JSON.parse(lesson.teachingProcess);
+            if (typeof processObj === 'object' && processObj !== null) {
+                const stageMap = {
+                    introduction: '课堂导入',
+                    mainContent: '新课讲授',
+                    practice: '巩固练习',
+                    summary: '课堂总结'
+                };
+                for (const [key, label] of Object.entries(stageMap)) {
+                    if (processObj[key]) {
+                        processHTML += `<div class="process-stage"><strong>${label}：</strong>${formatProcessContent(processObj[key])}</div>`;
+                    }
+                }
+                // 兜底：如果有未识别的 key
+                const knownKeys = Object.keys(stageMap);
+                const extraKeys = Object.keys(processObj).filter(k => !knownKeys.includes(k));
+                if (extraKeys.length > 0) {
+                    extraKeys.forEach(k => {
+                        processHTML += `<div class="process-stage"><strong>${escapeHTML(k)}：</strong>${formatProcessContent(processObj[k])}</div>`;
+                    });
+                }
+            } else {
+                processHTML = `<div class="process-stage">${formatProcessContent(lesson.teachingProcess)}</div>`;
+            }
+        } catch {
+            processHTML = `<div class="process-stage">${formatProcessContent(lesson.teachingProcess)}</div>`;
+        }
+    }
+
+    const safeTitle = escapeHTML(lesson.title || '教案');
+    const subject = escapeHTML(lesson.subject || '');
+    const grade = escapeHTML(lesson.grade || '');
+    const createdAt = escapeHTML(lesson.createdAt || '');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face {
+    font-family: "WangshiyunCJK";
+    src: url("file:///home/devbox/apps/wangshiyun-edu/backend/assets/fonts/NotoSansCJKsc-Regular.otf") format("opentype");
+    font-weight: 400;
+    font-style: normal;
+  }
+  @page { size: A4 portrait; margin: 20mm 18mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "WangshiyunCJK", "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
+    font-size: 14px; line-height: 1.8; color: #333;
+    padding: 0 12px;
+  }
+  h1 { text-align: center; font-size: 24px; margin: 24px 0 8px; color: #1a1a1a; }
+  .meta { text-align: center; color: #888; font-size: 13px; margin-bottom: 24px; }
+  .meta span { margin: 0 12px; }
+  .meta .tag { background: #f0e4e8; color: #a9446a; padding: 2px 10px; border-radius: 4px; }
+  h2 { font-size: 17px; color: #1a1a1a; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #eee; }
+  h2::before { content: "○ "; color: #a9446a; }
+  .goal-group { margin-bottom: 10px; }
+  .goal-title { font-weight: bold; color: #a9446a; margin-bottom: 4px; }
+  .goal-item { padding: 3px 0; padding-left: 4px; }
+  .badge { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center;
+           border-radius: 50%; background: #f0e4e8; color: #a9446a; font-size: 12px; font-weight: bold; margin-right: 6px; }
+  .badge.green { background: #e6f7e6; color: #2d8a2d; }
+  .process-stage { margin-bottom: 12px; padding: 8px 10px; background: #fafafa; border-radius: 6px; border-left: 3px solid #a9446a; }
+  .footer { text-align: center; color: #aaa; font-size: 12px; margin-top: 36px; padding-top: 12px; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+  <h1>${safeTitle}</h1>
+  <div class="meta">
+    <span class="tag">${subject}</span>
+    <span class="tag">${grade}</span>
+    <span>创建时间：${createdAt}</span>
+  </div>
+
+  <h2>教学目标</h2>
+  <div>${goalsHTML || '<div class="goal-item">暂无</div>'}</div>
+
+  <h2>教学重点</h2>
+  <div>${keyPointsHTML || '<div class="goal-item">暂无</div>'}</div>
+
+  <h2>教学过程</h2>
+  <div>${processHTML || '<div class="process-stage">暂无</div>'}</div>
+
+  <h2>作业布置</h2>
+  <div class="process-stage">${lesson.assignments ? formatProcessContent(lesson.assignments) : '<span style="color:#999">暂无</span>'}</div>
+
+  <h2>教学总结</h2>
+  <div class="process-stage">${lesson.summary ? formatProcessContent(lesson.summary) : '<span style="color:#999">暂无</span>'}</div>
+
+  <div class="footer">网师云 - 师范生备课辅助系统</div>
+</body>
+</html>`;
+}
+
+/** 转义 HTML 特殊字符，防止 XSS */
+function escapeHTML(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/"/g, '"')
+        .replace(/'/g, '&#039;');
+}
+
+/** 将教学过程中的字符串或数组格式化为 HTML */
+function formatProcessContent(content) {
+    if (!content) return '';
+    if (Array.isArray(content)) {
+        return content.map(item => {
+            if (typeof item === 'object' && item !== null) {
+                const parts = [];
+                if (item.duration) parts.push(`<strong>[${escapeHTML(item.duration)}]</strong>`);
+                if (item.activity || item.activities || item.description || item.content || item.text) {
+                    const text = item.activity || item.activities || item.description || item.content || item.text;
+                    parts.push(formatProcessContent(text));
+                }
+                // 递归处理子项
+                const known = new Set(['duration', 'activity', 'activities', 'description', 'content', 'text']);
+                Object.keys(item).filter(k => !known.has(k)).forEach(k => {
+                    parts.push(`<strong>${escapeHTML(k)}：</strong>${formatProcessContent(item[k])}`);
+                });
+                return `<div style="margin-bottom:6px">${parts.join(' ')}</div>`;
+            }
+            return `<div style="margin-bottom:6px">${escapeHTML(String(item))}</div>`;
+        }).join('');
+    }
+    if (typeof content === 'object' && content !== null) {
+        return Object.entries(content).map(([k, v]) =>
+            `<div><strong>${escapeHTML(k)}：</strong>${formatProcessContent(v)}</div>`
+        ).join('');
+    }
+    // 字符串：保留换行
+    return String(content).split('\n').map(line => escapeHTML(line)).join('<br>');
+}
 
 module.exports = {
     createLesson,

@@ -3,9 +3,14 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import PPTModalPreview from '@/components/PPTModalPreview';
+import GeneratingProgressModal from '@/components/GeneratingProgressModal';
 import { exportToPptx } from '@/utils/exportPptx';
+import { formatChinaDateTime } from '@/utils/dateTime';
 import { pptAPI, lessonAPI } from '@/api';
 import type { PPTRecord, Lesson, PPTPage } from '@/types';
+
+const PPT_PAGE_SIZE = 10;
+const PPT_FETCH_PAGE_SIZE = 1000;
 
 const PPT: React.FC = () => {
   const location = useLocation();
@@ -16,6 +21,7 @@ const PPT: React.FC = () => {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [selectedLesson, setSelectedLesson] = useState<number | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generatingStage, setGeneratingStage] = useState('');
   const [error, setError] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewPages, setPreviewPages] = useState<PPTPage[]>([]);
@@ -24,13 +30,12 @@ const PPT: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
-  const [replaceTarget, setReplaceTarget] = useState<{ title: string; action: 'generate' | 'create'; lessonId?: number } | null>(null);
+  const [replaceTarget, setReplaceTarget] = useState<{ title: string; action: 'generate'; lessonId?: number } | null>(null);
   const [replacing, setReplacing] = useState(false);
-  const [newPptNameOpen, setNewPptNameOpen] = useState(false);
-  const [newPptName, setNewPptName] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [selectedTheme, setSelectedTheme] = useState('default');
 
   useEffect(() => {
     fetchPPTs();
@@ -49,7 +54,7 @@ const PPT: React.FC = () => {
   const fetchPPTs = async () => {
     setLoading(true);
     try {
-      const result = await pptAPI.list().catch(() => ({ ppts: [] }));
+      const result = await pptAPI.list({ page: 1, pageSize: PPT_FETCH_PAGE_SIZE }).catch(() => ({ ppts: [] }));
       setPpts(result.ppts || []);
     } catch (error) {
       setPpts([]);
@@ -70,6 +75,7 @@ const PPT: React.FC = () => {
   const handleGenerate = async () => {
     if (!selectedLesson) { setError('请选择一个教案'); return; }
     setGenerating(true);
+    setGeneratingStage('正在分析教案内容...');
     setError('');
     try {
       // 获取教案标题作为PPT标题，检查是否重名
@@ -88,7 +94,18 @@ const PPT: React.FC = () => {
       } catch {
         // check-title 接口不存在时继续正常流程
       }
-      await pptAPI.generate(selectedLesson);
+      
+      // 模拟阶段更新
+      const stageTimer1 = setTimeout(() => setGeneratingStage('正在设计PPT页面布局...'), 3000);
+      const stageTimer2 = setTimeout(() => setGeneratingStage('正在生成教学内容...'), 10000);
+      const stageTimer3 = setTimeout(() => setGeneratingStage('正在美化PPT样式...'), 20000);
+      
+      await pptAPI.generate(selectedLesson, false, true, selectedTheme);
+      
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+      clearTimeout(stageTimer3);
+      
       fetchPPTs();
       setSelectedLesson(null);
       setShowGenerateModal(false);
@@ -97,6 +114,7 @@ const PPT: React.FC = () => {
       setError((err as Error).message || '生成失败');
     } finally {
       setGenerating(false);
+      setGeneratingStage('');
     }
   };
 
@@ -138,192 +156,23 @@ const PPT: React.FC = () => {
     }
   };
 
-  const handleCreateBlankPpt = () => {
-    setNewPptName('');
-    setNewPptNameOpen(true);
-  };
-
-  const handleNewPptNameConfirm = async () => {
-    const name = newPptName.trim();
-    if (!name) return;
-    setCreating(true);
-    try {
-      // 检查是否重名
-      try {
-        const checkResult = await pptAPI.checkTitle(name);
-        if (checkResult.exists) {
-          setNewPptNameOpen(false);
-          setReplaceTarget({ title: name, action: 'create' });
-          setReplaceConfirmOpen(true);
-          setCreating(false);
-          return;
-        }
-      } catch {
-        // check-title 接口不存在时继续正常流程
-      }
-
-      // 创建 PPT 记录到数据库
-      const createResult = await pptAPI.createCustom({
-        title: name,
-        pages: [{ type: 'cover', title: '封面', content: { mainContent: '' } }],
-        templateStyle: 'default',
-      });
-
-      // 生成空白PPTX并上传到服务器
-      const PptxGenJS = (await import('pptxgenjs')).default;
-      const pptx = new PptxGenJS();
-      pptx.title = name;
-      const s1 = pptx.addSlide();
-      s1.background = { color: '1E40AF' };
-      s1.addText(name, { x: 1, y: 2.5, w: 11.33, h: 1.5, fontSize: 36, color: 'FFFFFF', bold: true, align: 'center' });
-      const buffer = await pptx.write({ outputType: 'arraybuffer' });
-      const blob = new Blob([buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
-      const file = new File([blob], `${name}.pptx`, { type: blob.type });
-      const formData = new FormData();
-      formData.append('file', file);
-      const token = localStorage.getItem('token');
-      const uploadRes = await fetch('/api/onlyoffice/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
-      });
-      const uploadResult = await uploadRes.json();
-
-      setNewPptNameOpen(false);
-      setNewPptName('');
-      fetchPPTs();
-
-      if (uploadResult.success && uploadResult.data?.url) {
-        // 直接打开文件 URL（与"编辑"按钮行为一致）
-        window.open(uploadResult.data.url, '_blank');
-        // 跳转到PPT列表
-        navigate('/ppt');
-      } else {
-        // 上传失败则跳转到编辑页面
-        if (createResult && (createResult as any).id) {
-          navigate(`/ppt/${(createResult as any).id}/edit`);
-        }
-      }
-    } catch (err) {
-      alert('创建失败: ' + ((err as Error).message || '未知错误'));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const [editingPptId, setEditingPptId] = useState<number | null>(null);
-
-  const handleEditPpt = async (pptId: number, pptTitle: string, newWindow?: Window | null) => {
-    setEditingPptId(pptId);
-    let createdWindow = newWindow || null;
-    try {
-      const data = await pptAPI.detail(pptId);
-      if (!data || !data.content) {
-        throw new Error('PPT内容为空，无法编辑');
-      }
-      const pages = data.content.pages || [];
-
-      if (pages.length === 0) {
-        throw new Error('PPT没有幻灯片页面');
-      }
-
-      // 生成 PPTX
-      const PptxGenJS = (await import('pptxgenjs')).default;
-      const pptx = new PptxGenJS();
-      pptx.title = data.title || pptTitle;
-
-      pages.forEach((p: any) => {
-        try {
-          const slide = pptx.addSlide();
-          const content = p.content || {};
-          if (p.type === 'cover') {
-            slide.background = { color: '1E40AF' };
-            slide.addText(content.mainTitle || p.title || '', { x: 1, y: 2.0, w: 11.33, h: 1.5, fontSize: 36, color: 'FFFFFF', bold: true, align: 'center' });
-            if (content.subtitle) slide.addText(content.subtitle, { x: 1, y: 3.5, w: 11.33, h: 0.8, fontSize: 20, color: 'BFDBFE', align: 'center' });
-            if (content.mainContent) slide.addText(content.mainContent, { x: 1, y: 4.8, w: 11.33, h: 0.5, fontSize: 14, color: '93C5FD', align: 'center' });
-            const dateStr = content.fullDateTime || content.date || '';
-            if (dateStr) slide.addText(dateStr, { x: 1, y: 5.5, w: 11.33, h: 0.4, fontSize: 12, color: '93C5FD', align: 'center' });
-          } else if (p.type === 'end') {
-            slide.background = { color: '1F2937' };
-            slide.addText(content.mainText || p.title || '', { x: 1, y: 2.5, w: 11.33, h: 1.5, fontSize: 36, color: 'FFFFFF', bold: true, align: 'center' });
-            if (content.subText) slide.addText(content.subText, { x: 1, y: 4.0, w: 11.33, h: 0.8, fontSize: 18, color: 'D1D5DB', align: 'center' });
-          } else if (content.items && Array.isArray(content.items)) {
-            slide.background = { color: 'FFFFFF' };
-            slide.addText(p.title || '', { x: 0.8, y: 0.2, w: 11.73, h: 0.9, fontSize: 24, color: '1E40AF', bold: true });
-            // 顶部装饰线
-            try { slide.addShape((pptx as any).ShapeType?.rect || 'rect', { x: 0.8, y: 1.05, w: 1.5, h: 0.05, fill: { color: '1E40AF' } }); } catch {}
-            const listItems = content.items.map((item: any, idx: number) => ({
-              text: `  ${item.number || idx + 1}.  ${typeof item === 'string' ? item : (item.text || String(item))}`,
-              options: { fontSize: 14, color: '374151', paraSpaceAfter: 6 }
-            }));
-            slide.addText(listItems, { x: 0.8, y: 1.3, w: 11.73, h: 5.5, valign: 'top', lineSpacingMultiple: 1.5 });
-          } else {
-            slide.background = { color: 'FFFFFF' };
-            slide.addText(p.title || '', { x: 0.8, y: 0.2, w: 11.73, h: 0.9, fontSize: 24, color: '1E40AF', bold: true });
-            try { slide.addShape((pptx as any).ShapeType?.rect || 'rect', { x: 0.8, y: 1.05, w: 1.5, h: 0.05, fill: { color: '1E40AF' } }); } catch {}
-            const bodyText = content.mainContent || content.text || content.mainText || '';
-            if (bodyText) slide.addText(bodyText, { x: 0.8, y: 1.3, w: 11.73, h: 5.5, fontSize: 14, color: '374151', valign: 'top', lineSpacingMultiple: 1.5 });
-          }
-          // 如果页面有配图，嵌入到幻灯片右侧
-          if (p.imageUrl) {
-            try {
-              slide.addImage({ data: p.imageUrl, x: 8.5, y: 1.5, w: 4.0, h: 3.0 });
-            } catch {
-              console.warn('嵌入图片失败，跳过:', p.imageUrl);
-            }
-          }
-          if (p.notes) slide.addNotes(p.notes);
-        } catch (slideErr) {
-          console.warn('渲染幻灯片出错，跳过:', slideErr);
-        }
-      });
-
-      // 上传到 OnlyOffice
-      const buffer = await pptx.write({ outputType: 'arraybuffer' });
-      const blob = new Blob([buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
-      const file = new File([blob], `${data.title || pptTitle}.pptx`, { type: blob.type });
-      const formData = new FormData();
-      formData.append('file', file);
-      const token = localStorage.getItem('token');
-      const uploadRes = await fetch('/api/onlyoffice/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
-      });
-      const uploadResult = await uploadRes.json();
-      if (uploadResult.success && uploadResult.data?.url) {
-        if (createdWindow) {
-          createdWindow.location.href = uploadResult.data.url;
-        } else {
-          window.open(uploadResult.data.url, '_blank');
-        }
-      } else {
-        console.error('OnlyOffice上传失败:', uploadResult);
-        if (createdWindow) { try { createdWindow.close(); } catch {} }
-        alert('OnlyOffice上传失败，请检查OnlyOffice服务是否运行');
-      }
-    } catch (err) {
-      console.error('编辑PPT失败:', err);
-      if (createdWindow) { try { createdWindow.close(); } catch {} }
-      alert('编辑PPT失败: ' + ((err as Error).message || '未知错误'));
-    } finally {
-      setEditingPptId(null);
-    }
-  };
-
   const handleReplaceConfirm = async () => {
     if (!replaceTarget) return;
     setReplacing(true);
+    setGenerating(true);
+    setGeneratingStage('正在重新生成PPT...');
     try {
       if (replaceTarget.action === 'generate' && replaceTarget.lessonId) {
-        await pptAPI.generate(replaceTarget.lessonId, true);
-      } else if (replaceTarget.action === 'create') {
-        await pptAPI.createCustom({
-          title: replaceTarget.title,
-          pages: [{ type: 'cover', title: '封面', content: { mainContent: '' } }],
-          templateStyle: 'default',
-          replaceExisting: true,
-        });
+        // 模拟阶段更新
+        const stageTimer1 = setTimeout(() => setGeneratingStage('正在分析教案内容...'), 3000);
+        const stageTimer2 = setTimeout(() => setGeneratingStage('正在设计PPT页面布局...'), 10000);
+        const stageTimer3 = setTimeout(() => setGeneratingStage('正在生成教学内容...'), 20000);
+        
+        await pptAPI.generate(replaceTarget.lessonId, true, true, selectedTheme);
+        
+        clearTimeout(stageTimer1);
+        clearTimeout(stageTimer2);
+        clearTimeout(stageTimer3);
       }
       setReplaceConfirmOpen(false);
       setReplaceTarget(null);
@@ -332,6 +181,8 @@ const PPT: React.FC = () => {
       alert('替换失败: ' + ((err as Error).message || '未知错误'));
     } finally {
       setReplacing(false);
+      setGenerating(false);
+      setGeneratingStage('');
     }
   };
 
@@ -349,17 +200,32 @@ const PPT: React.FC = () => {
         mainContent: p.content?.mainContent || p.content?.items?.map((i: any) => i.text || '').join('\n') || '',
         notes: p.notes || '',
       }));
-      if (exportPages.length > 0) exportToPptx(ppt.title, exportPages);
+      if (exportPages.length > 0) exportToPptx(ppt.title, exportPages, selectedTheme);
       else alert('该PPT没有可导出的内容');
     }).catch(() => alert('获取PPT数据失败'));
   };
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return '-';
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return dateString;
-    return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   };
+
+  const handleExportHtml = async (ppt: PPTRecord) => {
+    try {
+      const blob = await pptAPI.export(ppt.id, 'html');
+      downloadBlob(blob, `${ppt.title || '课件'}.html`);
+    } catch (err) {
+      alert((err as Error).message || '导出HTML失败');
+    }
+  };
+
+  const formatDate = (dateString: string) => formatChinaDateTime(dateString);
 
   const getStatusText = (status?: string) => {
     switch (status) {
@@ -380,17 +246,39 @@ const PPT: React.FC = () => {
   };
 
   const filteredPpts = ppts.filter((ppt) => !searchKeyword || ppt.title.toLowerCase().includes(searchKeyword.toLowerCase()));
+  
+  // 分页配置
+  const totalPages = Math.ceil(filteredPpts.length / PPT_PAGE_SIZE);
+  const paginatedPpts = filteredPpts.slice((currentPage - 1) * PPT_PAGE_SIZE, currentPage * PPT_PAGE_SIZE);
+  
+  // 搜索时重置到第一页
+  const handleSearchChange = (value: string) => {
+    setSearchKeyword(value);
+    setCurrentPage(1);
+  };
 
   return (
-    <Layout title="PPT生成" subtitle="基于教案自动生成教学课件" breadcrumbs={[{ label: '首页', path: '/' }, { label: '我的备课', path: '/lessons' }, { label: 'PPT生成' }]}>
+    <Layout title="PPT生成" subtitle="基于教案自动生成教学课件" breadcrumbs={[{ label: '首页', path: '/' }, { label: '我的备课', path: '/teaching-preparation' }, { label: 'PPT生成' }]}>
+      <GeneratingProgressModal
+        visible={generating}
+        title="AI智能生成PPT中"
+        stage={generatingStage}
+        estimatedTime={300}
+        tips={[
+          'AI正在分析教案内容，请耐心等待...',
+          '正在设计PPT页面布局...',
+          '正在生成精美的教学课件...',
+          'PPT即将生成完成，请勿关闭页面...',
+        ]}
+      />
       {/* Tab 导航 */}
-      <div className="bg-white rounded-xl shadow-sm mb-6">
+      <div className="mb-4 overflow-hidden rounded-xl bg-white shadow-sm sm:mb-6">
         <div className="flex border-b border-gray-200">
-          <button onClick={() => setActiveTab('generate')} className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors ${activeTab === 'generate' ? 'border-primary-500 text-primary-600 bg-primary-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
+          <button onClick={() => setActiveTab('generate')} className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-3 text-sm font-medium border-b-2 transition-colors sm:gap-2 sm:px-6 sm:py-4 ${activeTab === 'generate' ? 'border-primary-500 text-primary-600 bg-primary-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
             PPT设计
           </button>
-          <button onClick={() => { setActiveTab('myPpt'); fetchPPTs(); }} className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors ${activeTab === 'myPpt' ? 'border-primary-500 text-primary-600 bg-primary-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
+          <button onClick={() => { setActiveTab('myPpt'); fetchPPTs(); }} className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-3 text-sm font-medium border-b-2 transition-colors sm:gap-2 sm:px-6 sm:py-4 ${activeTab === 'myPpt' ? 'border-primary-500 text-primary-600 bg-primary-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
             我的PPT
           </button>
@@ -399,31 +287,23 @@ const PPT: React.FC = () => {
 
       {/* PPT设计 */}
       {activeTab === 'generate' && (
-        <div className="bg-white rounded-xl shadow-sm p-8">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 md:p-8">
           <div className="max-w-2xl mx-auto">
-            <div className="text-center mb-8">
+            <div className="mb-6 text-center sm:mb-8">
               <div className="w-16 h-16 bg-primary-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <svg className="h-8 w-8 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               </div>
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">PPT设计</h2>
-              <p className="text-gray-500">从教案生成PPT，或创建空白PPT进行编辑</p>
+              <h2 className="mb-2 text-xl font-bold text-gray-800 sm:text-2xl">PPT设计</h2>
+              <p className="text-gray-500">从教案生成PPT</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div className="flex justify-center mb-8">
               {/* 从教案生成 */}
-              <div className="border-2 border-dashed border-gray-200 rounded-xl p-6 hover:border-primary-300 hover:bg-primary-50/30 transition-all cursor-pointer" onClick={() => setShowGenerateModal(true)}>
+              <div className="border-2 border-dashed border-gray-200 rounded-xl p-6 hover:border-primary-300 hover:bg-primary-50/30 transition-all cursor-pointer w-full max-w-sm" onClick={() => setShowGenerateModal(true)}>
                 <div className="w-12 h-12 bg-primary-100 rounded-xl flex items-center justify-center mb-4">
                   <svg className="h-6 w-6 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 </div>
                 <h3 className="font-semibold text-gray-800 mb-1">从教案生成</h3>
                 <p className="text-sm text-gray-500">选择教案，AI自动生成PPT</p>
-              </div>
-              {/* 新建空白PPT */}
-              <div className="border-2 border-dashed border-gray-200 rounded-xl p-6 hover:border-primary-300 hover:bg-primary-50/30 transition-all cursor-pointer" onClick={handleCreateBlankPpt}>
-                <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center mb-4">
-                  <svg className="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                </div>
-                <h3 className="font-semibold text-gray-800 mb-1">新建空白PPT</h3>
-                <p className="text-sm text-gray-500">创建空白PPT，自由编辑</p>
               </div>
             </div>
           </div>
@@ -432,61 +312,129 @@ const PPT: React.FC = () => {
 
       {/* 我的PPT */}
       {activeTab === 'myPpt' && (
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+        <div className="mx-auto max-w-6xl min-w-0">
+          <div className="mb-4 rounded-xl bg-white p-3 shadow-sm sm:mb-6 sm:p-4">
             <div className="relative">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-              <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="搜索PPT标题..." className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm" />
-              {searchKeyword && <button onClick={() => setSearchKeyword('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>}
+              <input type="text" value={searchKeyword} onChange={(e) => handleSearchChange(e.target.value)} placeholder="搜索PPT标题..." className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm" />
+              {searchKeyword && <button onClick={() => handleSearchChange('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>}
             </div>
           </div>
           {loading ? (
             <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-500"></div></div>
           ) : filteredPpts.length === 0 ? (
-            <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+            <div className="rounded-xl bg-white p-6 text-center shadow-sm sm:p-12">
               <div className="text-6xl mb-4">📋</div>
               <h3 className="text-lg font-medium text-gray-700 mb-2">{searchKeyword ? '没有找到匹配的PPT' : '暂无PPT'}</h3>
               <p className="text-gray-500 mb-6">{searchKeyword ? '请尝试其他关键词' : '点击"从教案生成"创建您的第一个PPT'}</p>
               {!searchKeyword && <Button onClick={() => setActiveTab('generate')}>去生成PPT</Button>}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
-              {filteredPpts.map((ppt) => {
-                const lesson = lessons.find((l) => l.id === ppt.lessonId);
-                return (
-                  <div key={ppt.id} onClick={() => navigate(`/ppt/${ppt.id}`)} className="bg-white rounded-xl shadow-sm p-6 hover:shadow-md transition-shadow cursor-pointer border border-gray-100">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center"><span className="text-xl font-bold text-orange-600">P</span></div>
-                        <div>
-                          <h3 className="font-semibold text-gray-800">{ppt.title}</h3>
-                          <div className="flex items-center gap-4 mt-1">
-                            {lesson && <span className="text-sm text-gray-500">教案：{lesson.title}</span>}
-                            {!lesson && ppt.lessonId && <span className="text-sm text-gray-500">教案：未知</span>}
-                            {!ppt.lessonId && <span className="text-sm text-gray-500">独立创建</span>}
-                            <span className="text-sm text-gray-400">{formatDate(ppt.createdAt)}</span>
+            <React.Fragment>
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-4">
+                {paginatedPpts.map((ppt) => {
+                  const lesson = lessons.find((l) => l.id === ppt.lessonId);
+                  return (
+                    <div key={ppt.id} onClick={() => navigate(`/ppt/${ppt.id}`)} className="cursor-pointer rounded-xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-6">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+                          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-orange-100"><span className="text-xl font-bold text-orange-600">P</span></div>
+                          <div className="min-w-0">
+                            <h3 className="break-words font-semibold text-gray-800 sm:break-normal">{ppt.title}</h3>
+                            <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
+                              {lesson && <span className="break-words text-sm text-gray-500">教案：{lesson.title}</span>}
+                              {!lesson && ppt.lessonId && <span className="text-sm text-gray-500">教案：未知</span>}
+                              {!ppt.lessonId && <span className="text-sm text-gray-500">独立创建</span>}
+                              <span className="text-sm text-gray-400 sm:whitespace-nowrap">{formatDate(ppt.createdAt)}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); navigate(`/ppt/${ppt.id}`); }} className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="查看PPT">
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); const w = window.open('', '_blank'); handleEditPpt(ppt.id, ppt.title, w); }} className="p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="在OnlyOffice中编辑">
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); handleExportPptx(ppt); }} className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="导出PPTX">
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); handleDeleteClick(ppt.id, ppt.title); }} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="删除">
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
+                           <button onClick={(e) => { e.stopPropagation(); navigate(`/ppt/${ppt.id}`); }} className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="查看PPT">
+                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                           </button>
+                           <button onClick={(e) => { e.stopPropagation(); handleExportPptx(ppt); }} className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="导出PPTX">
+                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                           </button>
+                           <button onClick={(e) => { e.stopPropagation(); handleExportHtml(ppt); }} className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="导出HTML">
+                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                           </button>
+                           <button onClick={(e) => { e.stopPropagation(); handleDeleteClick(ppt.id, ppt.title); }} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="删除">
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+              {/* 分页导航 */}
+              {filteredPpts.length > 0 && (
+                <div className="mt-4 rounded-xl bg-white p-3 shadow-sm sm:p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-sm text-gray-500">
+                      共 {filteredPpts.length} 个PPT，第 {currentPage}/{totalPages} 页
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end">
+                      <button
+                        onClick={() => setCurrentPage(1)}
+                        disabled={currentPage === 1}
+                        className="hidden px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:inline-flex"
+                      >
+                        首页
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        上一页
+                      </button>
+                      {/* 页码按钮 */}
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum: number;
+                        if (totalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          pageNum = currentPage - 2 + i;
+                        }
+                        return (
+                          <button
+                            key={pageNum}
+                            onClick={() => setCurrentPage(pageNum)}
+                            className={`hidden px-3 py-1.5 text-sm font-medium rounded-lg transition-colors sm:inline-flex ${
+                              currentPage === pageNum
+                                ? 'bg-primary-600 text-white border border-primary-600'
+                                : 'text-gray-600 bg-white border border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                      <button
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={currentPage === totalPages}
+                        className="hidden px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:inline-flex"
+                      >
+                        下一页
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage(totalPages)}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        末页
+                      </button>
+                    </div>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              )}
+            </React.Fragment>
           )}
         </div>
       )}
@@ -530,34 +478,6 @@ const PPT: React.FC = () => {
         </div>
       )}
 
-      {/* 新建PPT名称输入弹窗 */}
-      {newPptNameOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!creating) { setNewPptNameOpen(false); setNewPptName(''); } }} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">新建空白PPT</h3>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">PPT名称 *</label>
-                <input
-                  type="text"
-                  value={newPptName}
-                  onChange={(e) => setNewPptName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && newPptName.trim()) handleNewPptNameConfirm(); }}
-                  placeholder="请输入PPT名称"
-                  autoFocus
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
-                />
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <button onClick={() => { setNewPptNameOpen(false); setNewPptName(''); }} disabled={creating} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50">取消</button>
-                <button onClick={handleNewPptNameConfirm} disabled={creating || !newPptName.trim()} className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors disabled:opacity-50">{creating ? '创建中...' : '确认创建'}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 生成PPT弹窗 */}
       {showGenerateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -574,10 +494,37 @@ const PPT: React.FC = () => {
                   {lessons.map((lesson) => (<option key={lesson.id} value={lesson.id}>{lesson.title} - {lesson.subject} - {lesson.grade}</option>))}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">颜色主题</label>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {([
+                    { key: 'default', name: '默认蓝', color: '#1E40AF' },
+                    { key: 'modern', name: '现代紫', color: '#7C3AED' },
+                    { key: 'academic', name: '学术绿', color: '#059669' },
+                    { key: 'warm', name: '温暖橙', color: '#EA580C' },
+                    { key: 'business', name: '商务灰', color: '#374151' },
+                    { key: 'creative', name: '创意粉', color: '#DB2777' },
+                  ] as const).map((theme) => (
+                    <button
+                      key={theme.key}
+                      type="button"
+                      onClick={() => setSelectedTheme(theme.key)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all text-sm ${
+                        selectedTheme === theme.key
+                          ? 'border-primary-500 bg-primary-50'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <span className="w-4 h-4 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: theme.color }} />
+                      <span className="text-gray-700">{theme.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">{error}</div>}
               <p className="text-sm text-gray-500">选择教案后，系统将根据教案内容自动生成PPT课件。</p>
             </div>
-            <div className="p-4 border-t border-gray-200 flex gap-3">
+            <div className="flex flex-col gap-3 border-t border-gray-200 p-4 sm:flex-row">
               <Button variant="secondary" onClick={() => setShowGenerateModal(false)}>取消</Button>
               <Button onClick={handleGenerate} loading={generating}>生成PPT</Button>
             </div>

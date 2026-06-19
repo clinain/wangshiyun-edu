@@ -12,13 +12,18 @@ import type {
   CreateLessonRequest,
   GenerateLessonRequest,
   CreatePortfolioRequest,
+  SendVerificationCodeRequest,
+  SendVerificationCodeResponse,
+  Notification,
 } from '@/types';
 
-const BASE_URL = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env.VITE_API_URL || 'http://localhost:3003/api';
+const BASE_URL = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env.VITE_API_URL || '/api';
+const DEFAULT_TIMEOUT_MS = 120000;
+const AI_GENERATION_TIMEOUT_MS = 600000;
 
 const axiosInstance: AxiosInstance = axios.create({
   baseURL: BASE_URL,
-  timeout: 120000,
+  timeout: DEFAULT_TIMEOUT_MS,
 });
 
 axiosInstance.interceptors.request.use(
@@ -35,10 +40,16 @@ axiosInstance.interceptors.request.use(
 axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const requestUrl = error.config?.url || '';
+    const isPublicPortfolioViewRequest = /^\/portfolios\/\d+$/.test(requestUrl);
+    if (error.response?.status === 401 && !isPublicPortfolioViewRequest) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
+    }
+    // 处理非2xx状态码的错误响应，提取后端返回的错误消息
+    if (error.response?.data?.message) {
+      throw new Error(error.response.data.message);
     }
     return Promise.reject(error);
   }
@@ -66,6 +77,16 @@ export const authAPI = {
     return responseHandler(response);
   },
 
+  sendVerificationCode: async (data: SendVerificationCodeRequest): Promise<SendVerificationCodeResponse> => {
+    const response = await axiosInstance.post<ApiResponse<SendVerificationCodeResponse>>('/auth/send-verification-code', data);
+    return responseHandler(response);
+  },
+
+  sendLoginCode: async (data: SendVerificationCodeRequest): Promise<SendVerificationCodeResponse> => {
+    const response = await axiosInstance.post<ApiResponse<SendVerificationCodeResponse>>('/auth/send-login-code', data);
+    return responseHandler(response);
+  },
+
   getCurrentUser: async (): Promise<User> => {
     const response = await axiosInstance.get<ApiResponse<User>>('/auth/me');
     return responseHandler(response);
@@ -78,6 +99,28 @@ export const authAPI = {
 
   updateProfile: async (data: { name?: string; email?: string; school?: string }): Promise<User> => {
     const response = await axiosInstance.put<ApiResponse<User>>('/auth/profile', data);
+    return responseHandler(response);
+  },
+
+  uploadAvatar: async (formData: FormData): Promise<User> => {
+    const response = await axiosInstance.post<ApiResponse<User>>('/auth/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return responseHandler(response);
+  },
+
+  changePassword: async (data: { oldPassword: string; newPassword: string }): Promise<void> => {
+    const response = await axiosInstance.post<ApiResponse<void>>('/auth/change-password', data);
+    return responseHandler(response);
+  },
+
+  sendResetPasswordCode: async (data: SendVerificationCodeRequest): Promise<SendVerificationCodeResponse> => {
+    const response = await axiosInstance.post<ApiResponse<SendVerificationCodeResponse>>('/auth/send-reset-password-code', data);
+    return responseHandler(response);
+  },
+
+  resetPassword: async (data: { email: string; verificationCode: string; newPassword: string }): Promise<void> => {
+    const response = await axiosInstance.post<ApiResponse<void>>('/auth/reset-password', data);
     return responseHandler(response);
   },
 
@@ -154,7 +197,9 @@ export const lessonAPI = {
     studentLevel?: string;
     customRequirements?: string;
   }): Promise<any> => {
-    const response = await axiosInstance.post<ApiResponse<any>>('/lessons/generate-aware', data);
+    const response = await axiosInstance.post<ApiResponse<any>>('/lessons/generate-aware', data, {
+      timeout: AI_GENERATION_TIMEOUT_MS,
+    });
     return responseHandler(response);
   },
 
@@ -173,7 +218,50 @@ export const lessonAPI = {
   },
 };
 
+export interface UnifiedResourceItem {
+  id: number;
+  title: string;
+  resourceType: 'lesson' | 'ppt' | 'portfolio' | 'resource';
+  subject?: string;
+  grade?: string;
+  createdAt: string;
+  viewCount: number;
+  downloadCount: number;
+  favoriteCount: number;
+  ownerId: number;
+  authorName?: string;
+  fileUrl?: string;
+  fileFormat?: string;
+  fileSize?: number;
+  category?: string;
+  description?: string;
+  tags?: string;
+  coverUrl?: string;
+}
+
 export const resourceAPI = {
+  all: async (params?: {
+    page?: number;
+    pageSize?: number;
+    keyword?: string;
+    type?: string;
+    fileFormat?: string;
+    subject?: string;
+    grade?: string;
+    sortBy?: string;
+    sortOrder?: string;
+  }): Promise<{ items: UnifiedResourceItem[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
+    const response = await axiosInstance.get('/resources/all', { params });
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || '请求失败');
+    }
+    // pagination 在 response.data.pagination 中，不在 data.data 中
+    return {
+      items: response.data.data?.items || [],
+      pagination: response.data.pagination || { page: 1, pageSize: 20, total: 0, totalPages: 0 }
+    };
+  },
+
   list: async (params?: {
     page?: number;
     pageSize?: number;
@@ -181,6 +269,8 @@ export const resourceAPI = {
     type?: string;
     subject?: string;
     grade?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }): Promise<{ resources: Resource[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
     const response = await axiosInstance.get<ApiResponse<{ resources: Resource[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>('/resources', { params });
     return responseHandler(response);
@@ -202,8 +292,9 @@ export const resourceAPI = {
     page?: number;
     pageSize?: number;
     keyword?: string;
-  }): Promise<{ resources: Resource[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
-    const response = await axiosInstance.get<ApiResponse<{ resources: Resource[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>('/resources/my', { params });
+    source?: 'all' | 'uploaded' | 'downloaded';
+  }): Promise<{ resources: Resource[]; portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
+    const response = await axiosInstance.get<ApiResponse<{ resources: Resource[]; portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>('/resources/my', { params });
     return responseHandler(response);
   },
 
@@ -228,6 +319,28 @@ export const resourceAPI = {
     return response.data;
   },
 
+  preview: async (id: number): Promise<string> => {
+    const token = localStorage.getItem('token');
+    const baseUrl = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env.VITE_API_URL || '/api';
+    const url = `${baseUrl}/resources/${id}/preview`;
+    return token ? `${url}?token=${token}` : url;
+  },
+
+  previewText: async (id: number): Promise<{ content: string; title: string; fileFormat: string }> => {
+    const response = await axiosInstance.get(`/resources/${id}/preview-text`);
+    return responseHandler(response);
+  },
+
+  togglePublic: async (id: number): Promise<void> => {
+    const response = await axiosInstance.put<ApiResponse<void>>(`/resources/${id}/public`);
+    return responseHandler(response);
+  },
+
+  copyToMy: async (id: number): Promise<Resource> => {
+    const response = await axiosInstance.post<ApiResponse<Resource>>(`/resources/${id}/copy`);
+    return responseHandler(response);
+  },
+
   delete: async (id: number): Promise<void> => {
     const response = await axiosInstance.delete<ApiResponse<void>>(`/resources/${id}`);
     if (!response.data) {
@@ -249,6 +362,9 @@ export const portfolioAPI = {
     page?: number;
     pageSize?: number;
     keyword?: string;
+    subject?: string;
+    grade?: string;
+    category?: string;
   }): Promise<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
     const response = await axiosInstance.get<ApiResponse<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>('/portfolios', { params });
     return responseHandler(response);
@@ -278,6 +394,9 @@ export const portfolioAPI = {
     page?: number;
     pageSize?: number;
     keyword?: string;
+    subject?: string;
+    grade?: string;
+    category?: string;
   }): Promise<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
     const response = await axiosInstance.get<ApiResponse<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>('/portfolios/public', { params });
     return responseHandler(response);
@@ -287,9 +406,19 @@ export const portfolioAPI = {
     page?: number;
     pageSize?: number;
     keyword?: string;
+    subject?: string;
+    grade?: string;
+    category?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }): Promise<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
-    const response = await axios.get<ApiResponse<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>(`${BASE_URL}/portfolios/public`, { params });
-    return response.data.data || { portfolios: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } };
+    try {
+      const response = await axiosInstance.get<ApiResponse<{ portfolios: Portfolio[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>>('/portfolios/public', { params });
+      return responseHandler(response);
+    } catch {
+      // 公开接口允许未认证访问，返回空数据作为降级
+      return { portfolios: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } };
+    }
   },
 
   share: async (id: number): Promise<{ shareUrl: string; shareCount: number }> => {
@@ -306,7 +435,24 @@ export const portfolioAPI = {
     const response = await axiosInstance.get(`/portfolios/${id}/export`, {
       responseType: 'blob',
     });
-    return response.data;
+    // 当后端返回错误时（如500），responseType: 'blob' 会使响应体成为 Blob，
+    // 需要检测 Blob 是否为 JSON 错误响应
+    const data = response.data;
+    if (data instanceof Blob && data.type === 'application/json') {
+      const text = await data.text();
+      try {
+        const json = JSON.parse(text);
+        if (json.success === false) {
+          throw new Error(json.message || '导出失败');
+        }
+      } catch (parseError: any) {
+        if (parseError?.message && parseError.message !== '导出失败') {
+          throw parseError;
+        }
+        // JSON 解析失败说明确实是二进制数据，正常返回
+      }
+    }
+    return data;
   },
 };
 
@@ -316,29 +462,17 @@ export const pptAPI = {
     return responseHandler(response);
   },
 
-  generate: async (lessonId: number, replaceExisting?: boolean, useAI: boolean = true): Promise<PPTRecord> => {
-    const response = await axiosInstance.post<ApiResponse<PPTRecord>>('/ppt/generate', { lessonId, replaceExisting, useAI });
+  generate: async (lessonId: number, replaceExisting?: boolean, useAI: boolean = true, theme?: string): Promise<PPTRecord> => {
+    const response = await axiosInstance.post<ApiResponse<PPTRecord>>('/ppt/generate', { lessonId, replaceExisting, useAI, theme }, {
+      timeout: 300000,
+    });
     return responseHandler(response);
   },
 
-  createCustom: async (data: {
-    title: string;
-    pages: Array<{
-      type?: string;
-      title: string;
-      content: Record<string, unknown>;
-      layout?: string;
-      notes?: string;
-    }>;
-    templateStyle?: string;
-    replaceExisting?: boolean;
-  }): Promise<PPTRecord> => {
-    const response = await axiosInstance.post<ApiResponse<PPTRecord>>('/ppt/create-custom', data);
-    return responseHandler(response);
-  },
-
-  sync: async (lessonId: number): Promise<PPTRecord> => {
-    const response = await axiosInstance.post<ApiResponse<PPTRecord>>('/ppt/sync', { lessonId });
+  sync: async (lessonId: number, theme?: string): Promise<PPTRecord> => {
+    const response = await axiosInstance.post<ApiResponse<PPTRecord>>('/ppt/sync', { lessonId, useAI: true, theme }, {
+      timeout: 300000,
+    });
     return responseHandler(response);
   },
 
@@ -367,9 +501,10 @@ export const pptAPI = {
     return responseHandler(response);
   },
 
-  export: async (id: number): Promise<Blob> => {
+  export: async (id: number, format: 'json' | 'html' = 'json'): Promise<Blob> => {
     const response = await axiosInstance.get(`/ppt/${id}/export`, {
       responseType: 'blob',
+      params: { format },
     });
     return response.data;
   },
@@ -498,6 +633,7 @@ export const standardAPI = {
 export interface CommentItem {
   id: number;
   resourceId: number;
+  portfolioId?: number;
   userId: number;
   parentId: number | null;
   content: string;
@@ -508,7 +644,9 @@ export interface CommentItem {
   userName: string;
   userAvatar: string | null;
   replyCount?: number;
+  childReplyCount?: number;
   recentReplies?: CommentItem[];
+  replyToUserName?: string;
 }
 
 export interface CommentStats {
@@ -546,6 +684,43 @@ export const commentAPI = {
   // 获取评论统计（支持 resources 和 portfolios）
   getStats: async (entityType: string, entityId: number): Promise<CommentStats> => {
     const response = await axiosInstance.get(`/${entityType}/${entityId}/comments/stats`);
+    return responseHandler(response);
+  },
+};
+
+// ========== 通知 API ==========
+export const notificationAPI = {
+  // 获取通知列表
+  list: async (params?: {
+    page?: number;
+    pageSize?: number;
+    type?: string;
+  }): Promise<{ notifications: Notification[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> => {
+    const response = await axiosInstance.get<ApiResponse<{ notifications: Notification[]; pagination: any }>>('/notifications', { params });
+    return responseHandler(response);
+  },
+
+  // 获取未读通知数量
+  getUnreadCount: async (): Promise<{ count: number }> => {
+    const response = await axiosInstance.get<ApiResponse<{ count: number }>>('/notifications/unread-count');
+    return responseHandler(response);
+  },
+
+  // 标记单条通知为已读
+  markAsRead: async (id: number): Promise<void> => {
+    const response = await axiosInstance.put<ApiResponse<void>>(`/notifications/${id}/read`);
+    return responseHandler(response);
+  },
+
+  // 标记所有通知为已读
+  markAllAsRead: async (): Promise<void> => {
+    const response = await axiosInstance.put<ApiResponse<void>>('/notifications/read-all');
+    return responseHandler(response);
+  },
+
+  // 删除通知
+  delete: async (id: number): Promise<void> => {
+    const response = await axiosInstance.delete<ApiResponse<void>>(`/notifications/${id}`);
     return responseHandler(response);
   },
 };
@@ -643,6 +818,67 @@ export const knowledgeBaseAPI = {
   },
 };
 
+// ============ 管理员 API ============
+
+export const adminAPI = {
+  // 获取用户列表
+  getUsers: async (params: {
+    page?: number;
+    pageSize?: number;
+    keyword?: string;
+    role?: string;
+    status?: number;
+  }) => {
+    const response = await axiosInstance.get('/admin/users', { params });
+    return responseHandler(response);
+  },
+
+  // 获取用户详情
+  getUserDetail: async (id: number) => {
+    const response = await axiosInstance.get(`/admin/users/${id}`);
+    return responseHandler(response);
+  },
+
+  // 启用/禁用用户
+  toggleUserStatus: async (id: number, status: number) => {
+    const response = await axiosInstance.put(`/admin/users/${id}/status`, { status });
+    return responseHandler(response);
+  },
+
+  // 修改用户角色
+  changeUserRole: async (id: number, role: string) => {
+    const response = await axiosInstance.put(`/admin/users/${id}/role`, { role });
+    return responseHandler(response);
+  },
+
+  // 重置用户密码
+  resetPassword: async (id: number) => {
+    const response = await axiosInstance.post(`/admin/users/${id}/reset-password`);
+    return responseHandler(response);
+  },
+
+  // 删除用户
+  deleteUser: async (id: number) => {
+    const response = await axiosInstance.delete(`/admin/users/${id}`);
+    return responseHandler(response);
+  },
+
+  // 获取系统统计
+  getStats: async () => {
+    const response = await axiosInstance.get('/admin/stats');
+    return responseHandler(response);
+  },
+
+  // 获取操作日志
+  getLogs: async (params: {
+    page?: number;
+    pageSize?: number;
+    adminId?: number;
+    action?: string;
+  }) => {
+    const response = await axiosInstance.get('/admin/logs', { params });
+    return responseHandler(response);
+  },
+};
+
 export default axiosInstance;
-
-

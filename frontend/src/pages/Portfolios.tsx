@@ -1,17 +1,301 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import PPTModalPreview from '@/components/PPTModalPreview';
+import HtmlDeckFullscreenModal from '@/components/HtmlDeckFullscreenModal';
 import CommentSection from '@/components/CommentSection';
 import { portfolioAPI, lessonAPI, pptAPI } from '@/api';
 import type { Portfolio, Lesson, PPTRecord, PPTPage } from '@/types';
+import { teachingGoalsToText } from '@/utils/teachingGoalsHelper';
+
+const subjects = ['全部', '语文', '数学', '英语', '物理', '化学', '生物学', '历史', '地理', '道德与法治', '科学', '信息科技', '音乐', '美术', '体育与健康', '劳动', '艺术'];
+const stages = ['全部', '小学', '初中', '高中', '其他'];
+const categories = ['全部', '课件', '教案', '习题', '试卷', '素材', '其他'];
+
+/** 学段对应的年级选项 */
+const gradeOptionsByStage: Record<string, string[]> = {
+  '小学': ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'],
+  '初中': ['七年级', '八年级', '九年级'],
+  '高中': ['高一', '高二', '高三'],
+  '其他': ['其他'],
+};
+
+/** 所有年级（用于筛选） */
+const allGrades = ['全部', ...Object.values(gradeOptionsByStage).flat()];
+
+/**
+ * 将教学重点解析为纯文本列表
+ * 支持 JSON 数组字符串、已解析的数组对象、纯文本三种格式
+ */
+function parseKeyPoints(keyPoints: unknown): string {
+  if (!keyPoints) return '';
+  if (Array.isArray(keyPoints)) {
+    return keyPoints.map(String).join('\n');
+  }
+  if (typeof keyPoints === 'string') {
+    const trimmed = keyPoints.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map(String).join('\n');
+        }
+      } catch {
+        // 解析失败，当作纯文本
+      }
+    }
+    return keyPoints;
+  }
+  return String(keyPoints);
+}
+
+/**
+ * 将教学过程的 JSON 数据解析并格式化为可读文字
+ * 支持 JSON 字符串、已解析的对象、纯文本三种格式
+ */
+function parseTeachingProcess(data: unknown): string {
+  // 如果为空，直接返回空字符串
+  if (!data) return '';
+
+  let obj: Record<string, unknown>;
+
+  const parseLooseJson = (text: string): unknown => {
+    const trimmed = text.trim();
+    const candidates = [
+      trimmed,
+      `{"mainContent":{"stages":[{${trimmed}`,
+      `{"stages":[{${trimmed}`,
+      `{${trimmed}}`,
+      `[{${trimmed}}]`,
+    ];
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // 继续尝试下一个容错包装
+      }
+    }
+    return text;
+  };
+
+  if (typeof data === 'string') {
+    // 尝试解析 JSON 字符串
+    const parsed = parseLooseJson(data);
+    if (typeof parsed === 'string') {
+      return data;
+    }
+    if (Array.isArray(parsed)) {
+      return parsed.length > 0 ? parseTeachingProcess({ stages: parsed }) : '';
+    }
+    obj = parsed as Record<string, unknown>;
+  } else if (Array.isArray(data)) {
+    obj = { stages: data };
+  } else if (typeof data === 'object' && data !== null) {
+    obj = data as Record<string, unknown>;
+  } else {
+    return String(data);
+  }
+
+  // 如果解析后不是对象格式，返回空
+  if (typeof obj !== 'object' || obj === null) return '';
+
+  const parts: string[] = [];
+
+  const fieldLabels: Record<string, string> = {
+    introduction: '课堂导入',
+    mainContent: '新课讲授',
+    newTeaching: '新课讲授',
+    practice: '巩固练习',
+    summary: '课堂小结',
+    conclusion: '课堂小结',
+    homework: '作业安排',
+    assignments: '作业安排',
+    stages: '教学环节',
+    teacherActivities: '教师活动',
+    studentActivities: '学生活动',
+    teachingPoints: '教学要点',
+    activities: '活动',
+    content: '内容',
+    description: '说明',
+    stageName: '环节',
+    name: '名称',
+    duration: '时间',
+    timeAllocation: '时间',
+  };
+
+  // 辅助函数：从对象中安全获取数组
+  const getArray = (val: unknown): string[] => {
+    if (Array.isArray(val)) return val.map(String);
+    return [];
+  };
+
+  // 辅助函数：格式化数组为编号列表
+  const formatNumberedList = (items: string[]): string => {
+    if (items.length === 0) return '无';
+    return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+  };
+
+  const valueToLines = (value: unknown): string[] => {
+    if (!value) return [];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return [];
+      const parsed = parseLooseJson(trimmed);
+      if (typeof parsed !== 'string') {
+        return valueToLines(parsed);
+      }
+      return [trimmed];
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];
+    if (Array.isArray(value)) {
+      return value.flatMap((item, index) => {
+        const lines = valueToLines(item);
+        if (typeof item === 'object' && item !== null) return lines;
+        return lines.map(line => `${index + 1}. ${line}`);
+      });
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const lines: string[] = [];
+      const title = record.stageName || record.name || record.title;
+      const duration = record.duration || record.timeAllocation;
+      if (title || duration) {
+        lines.push(`${title ? String(title) : '教学环节'}${duration ? `（${duration}）` : ''}`);
+      }
+
+      Object.entries(record).forEach(([key, childValue]) => {
+        if (['stageName', 'name', 'title', 'duration', 'timeAllocation'].includes(key)) return;
+        const childLines = valueToLines(childValue);
+        if (childLines.length === 0) return;
+        const label = fieldLabels[key] || '';
+        if (label) {
+          lines.push(`${label}：`);
+          lines.push(...childLines.map(line => `  ${line}`));
+        } else {
+          lines.push(...childLines);
+        }
+      });
+      return lines;
+    }
+    return [];
+  };
+
+  // 辅助函数：格式化 activities 数组
+  const formatActivities = (activities: unknown): string => {
+    if (Array.isArray(activities)) {
+      return activities.map(a => {
+        if (typeof a === 'string') return a;
+        if (typeof a === 'object' && a !== null) {
+          const act = a as Record<string, unknown>;
+          const parts: string[] = [];
+          if (act.name) parts.push(String(act.name));
+          if (act.description) parts.push(String(act.description));
+          if (act.activity) parts.push(String(act.activity));
+          if (act.content) parts.push(String(act.content));
+          return parts.length > 0 ? parts.join('：') : JSON.stringify(a);
+        }
+        return String(a);
+      }).join('\n');
+    }
+    if (typeof activities === 'string') return activities;
+    return '无';
+  };
+
+  // 解析课堂导入
+  if (obj.introduction) {
+    const intro = obj.introduction as Record<string, unknown>;
+    const duration = intro.duration ? `(${intro.duration})` : '';
+    const content = intro.activities ? formatActivities(intro.activities) : (intro.content ? String(intro.content) : '');
+    parts.push(`【课堂导入】${duration}\n${content || '无'}`);
+  }
+
+  // 解析新课讲授
+  if (obj.newTeaching) {
+    const nt = obj.newTeaching as Record<string, unknown>;
+    const duration = nt.duration ? `(${nt.duration})` : '';
+    const stages = nt.stages;
+    let stagesText = '';
+    if (Array.isArray(stages)) {
+      stagesText = stages.map((stage: unknown, idx: number) => {
+        if (typeof stage !== 'object' || stage === null) return `阶段 ${idx + 1}: ${String(stage)}`;
+        const s = stage as Record<string, unknown>;
+        const lines: string[] = [];
+        const stageName = s.stageName || s.name || `阶段 ${idx + 1}`;
+        const stageDuration = s.duration ? ` (${s.duration})` : '';
+        lines.push(`  阶段${idx + 1}：${stageName}${stageDuration}`);
+        if (Array.isArray(s.teacherActivities) && s.teacherActivities.length > 0) {
+          lines.push(`    教师活动：`);
+          lines.push(formatNumberedList(getArray(s.teacherActivities)).split('\n').map(l => `    ${l}`).join('\n'));
+        }
+        if (Array.isArray(s.studentActivities) && s.studentActivities.length > 0) {
+          lines.push(`    学生活动：`);
+          lines.push(formatNumberedList(getArray(s.studentActivities)).split('\n').map(l => `    ${l}`).join('\n'));
+        }
+        if (Array.isArray(s.teachingPoints) && s.teachingPoints.length > 0) {
+          lines.push(`    教学要点：`);
+          lines.push(formatNumberedList(getArray(s.teachingPoints)).split('\n').map(l => `    ${l}`).join('\n'));
+        }
+        return lines.join('\n');
+      }).join('\n\n');
+    } else if (nt.activities) {
+      stagesText = formatActivities(nt.activities);
+    } else if (nt.content) {
+      stagesText = String(nt.content);
+    }
+    parts.push(`【新课讲授】${duration}\n${stagesText || '无'}`);
+  }
+
+  // 解析巩固练习
+  if (obj.practice) {
+    const practice = obj.practice as Record<string, unknown>;
+    const duration = practice.duration ? `(${practice.duration})` : '';
+    const content = practice.activities ? formatActivities(practice.activities) : (practice.content ? String(practice.content) : '');
+    parts.push(`【巩固练习】${duration}\n${content || '无'}`);
+  }
+
+  // 解析课堂小结
+  if (obj.summary) {
+    const summary = obj.summary as Record<string, unknown>;
+    const duration = summary.duration ? `(${summary.duration})` : '';
+    const content = summary.activities ? formatActivities(summary.activities) : (summary.content ? String(summary.content) : '');
+    parts.push(`【课堂小结】${duration}\n${content || '无'}`);
+  }
+
+  if (Array.isArray(obj.stages)) {
+    parts.push(`【教学环节】\n${valueToLines(obj.stages).join('\n')}`);
+  }
+
+  if (obj.mainContent && !obj.newTeaching) {
+    parts.push(`【新课讲授】\n${valueToLines(obj.mainContent).join('\n') || '无'}`);
+  }
+
+  // 如果没有匹配到任何已知字段，尝试通用格式化
+  if (parts.length === 0) {
+    for (const [key, value] of Object.entries(obj)) {
+      const label = fieldLabels[key] || '教学内容';
+      const lines = valueToLines(value);
+      if (lines.length > 0) parts.push(`【${label}】\n${lines.join('\n')}`);
+    }
+  }
+
+  return parts.length > 0 ? parts.join('\n\n') : '';
+}
+
+const PAGE_SIZE = 12;
 
 const Portfolios: React.FC = () => {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [stats, setStats] = useState({ total: 0, publicCount: 0, privateCount: 0 });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'all' | 'public' | 'private'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
   const [keyword, setKeyword] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [selectedSubject, setSelectedSubject] = useState('全部');
+  const [selectedGrade, setSelectedGrade] = useState('全部');
+  const [selectedCategory, setSelectedCategory] = useState('全部');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [ppts, setPpts] = useState<PPTRecord[]>([]);
@@ -19,6 +303,11 @@ const Portfolios: React.FC = () => {
   const [selectedPpts, setSelectedPpts] = useState<number[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [portfolioSubject, setPortfolioSubject] = useState('');
+  const [portfolioStage, setPortfolioStage] = useState('');
+  const [portfolioGrade, setPortfolioGrade] = useState('');
+  const [portfolioCategory, setPortfolioCategory] = useState('');
+  const [availableGrades, setAvailableGrades] = useState<string[]>([]);
   const [isPublic, setIsPublic] = useState(false);
   const [creating, setCreating] = useState(false);
   const [sharingId, setSharingId] = useState<number | null>(null);
@@ -29,52 +318,92 @@ const Portfolios: React.FC = () => {
   const [previewPpts, setPreviewPpts] = useState<PPTRecord[]>([]);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [previewingPpt, setPreviewingPpt] = useState<{ pages: PPTPage[]; title: string } | null>(null);
+  const [htmlDeckFullscreenOpen, setHtmlDeckFullscreenOpen] = useState(false);
+  const [htmlDeckData, setHtmlDeckData] = useState<{ html: string; title: string } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  useEffect(() => {
-    fetchPortfolios();
-  }, [activeTab, keyword]);
+  const copyShareUrl = async (shareUrl: string): Promise<boolean> => {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(shareUrl);
+      return true;
+    }
 
-const fetchPortfolios = async () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = shareUrl;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      return document.execCommand('copy');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
+  const fetchPortfolios = useCallback(async () => {
     setLoading(true);
     try {
+      const params: any = { pageSize: 100 };
+      if (searchKeyword) params.keyword = searchKeyword;
+      if (selectedSubject !== '全部') params.subject = selectedSubject;
+      if (selectedGrade !== '全部') params.grade = selectedGrade;
+      if (selectedCategory !== '全部') params.category = selectedCategory;
+
       // 所有标签都只获取当前用户的作品集
-      const allPortfolios = await portfolioAPI.list({ keyword: keyword || undefined, pageSize: 100 }).catch(() => ({ portfolios: [], pagination: { total: 0 } }));
-      console.log('获取到的作品集数据:', JSON.stringify(allPortfolios.portfolios?.map((p: Portfolio) => ({
-        id: p.id,
-        name: p.name,
-        lessonIds: p.lessonIds,
-        pptIds: p.pptIds
-      }))));
-      let filteredPortfolios = allPortfolios.portfolios || [];
+      const allPortfolios = await portfolioAPI.list(params).catch(() => ({ portfolios: [], pagination: { total: 0 } }));
+      const myPortfolios = allPortfolios.portfolios || [];
       
       // 根据标签页过滤
+      let filteredPortfolios = myPortfolios;
       if (activeTab === 'public') {
-        filteredPortfolios = filteredPortfolios.filter(p => p.isPublic);
+        filteredPortfolios = myPortfolios.filter(p => !!p.isPublic);
       } else if (activeTab === 'private') {
-        filteredPortfolios = filteredPortfolios.filter(p => !p.isPublic);
+        filteredPortfolios = myPortfolios.filter(p => !p.isPublic);
       }
-      
-      setPortfolios(filteredPortfolios);
 
       // 统计当前用户的作品
-      const myPortfolios = allPortfolios.portfolios || [];
       setStats({
         total: myPortfolios.length,
-        publicCount: myPortfolios.filter((p: Portfolio) => p.isPublic).length,
+        publicCount: myPortfolios.filter((p: Portfolio) => !!p.isPublic).length,
         privateCount: myPortfolios.filter((p: Portfolio) => !p.isPublic).length
       });
+
+      // 计算分页
+      const total = filteredPortfolios.length;
+      const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      setTotalItems(total);
+      setTotalPages(pages);
+      // 确保当前页不超出范围
+      const safePage = Math.min(currentPage, pages);
+      if (safePage !== currentPage) {
+        setCurrentPage(safePage);
+        return; // 页码修正后会触发重新渲染
+      }
+      const start = (safePage - 1) * PAGE_SIZE;
+      setPortfolios(filteredPortfolios.slice(start, start + PAGE_SIZE));
     } catch (error) {
       console.error('获取作品集失败:', error);
       setPortfolios([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeTab, searchKeyword, selectedSubject, selectedGrade, selectedCategory, currentPage]);
+
+  // 筛选条件变化时重置到第一页
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchKeyword, selectedSubject, selectedGrade, selectedCategory]);
+
+  useEffect(() => {
+    fetchPortfolios();
+  }, [fetchPortfolios]);
 
   const fetchLessons = async () => {
     try {
@@ -105,8 +434,6 @@ const fetchPortfolios = async () => {
     // lessonIds 和 pptIds 现在已经是数组格式
     const lessonIds = Array.isArray(portfolio.lessonIds) ? portfolio.lessonIds : [];
     const pptIds = Array.isArray(portfolio.pptIds) ? portfolio.pptIds : [];
-
-    console.log('预览作品集:', { lessonIds, pptIds });
 
     const loadedLessons: Lesson[] = [];
     for (const id of lessonIds) {
@@ -155,6 +482,10 @@ const fetchPortfolios = async () => {
       await portfolioAPI.create({
         name: title,
         description,
+        subject: portfolioSubject || undefined,
+        stage: portfolioStage || undefined,
+        grade: portfolioGrade || undefined,
+        category: portfolioCategory || undefined,
         lessonIds: selectedLessons,
         pptIds: selectedPpts,
         isPublic,
@@ -162,6 +493,11 @@ const fetchPortfolios = async () => {
       setShowCreateModal(false);
       setTitle('');
       setDescription('');
+      setPortfolioSubject('');
+      setPortfolioStage('');
+      setPortfolioGrade('');
+      setPortfolioCategory('');
+      setAvailableGrades([]);
       setSelectedLessons([]);
       setSelectedPpts([]);
       setIsPublic(false);
@@ -178,8 +514,8 @@ const fetchPortfolios = async () => {
     setSharingId(id);
     try {
       const result = await portfolioAPI.share(id);
-      await navigator.clipboard.writeText(result.shareUrl);
-      showToast('分享链接已复制到剪贴板');
+      const copied = await copyShareUrl(result.shareUrl);
+      showToast(copied ? '分享链接已复制到剪贴板' : `分享链接：${result.shareUrl}`);
       fetchPortfolios();
     } catch (error) {
       showToast('分享失败', 'error');
@@ -201,9 +537,10 @@ const fetchPortfolios = async () => {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
-      showToast('导出成功');
-    } catch (error) {
-      showToast('导出失败', 'error');
+      showToast('导出成功，已自动添加到"我的资源"', 'success');
+    } catch (error: any) {
+      const message = error?.message || '导出失败，请重试';
+      showToast(message, 'error');
     } finally {
       setExportingId(null);
     }
@@ -347,14 +684,36 @@ const fetchPortfolios = async () => {
               placeholder="搜索作品集..."
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && setSearchKeyword(keyword)}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
+            <button onClick={() => setSearchKeyword(keyword)} className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors">搜索</button>
               <Button onClick={handleOpenCreateModal}>
                 <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
                 创建作品集
               </Button>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">学科：</span>
+            <select value={selectedSubject} onChange={(e) => setSelectedSubject(e.target.value)} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white">
+              {subjects.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">年级：</span>
+            <select value={selectedGrade} onChange={(e) => setSelectedGrade(e.target.value)} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white">
+              {allGrades.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">分类：</span>
+            <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white">
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
         </div>
       </div>
@@ -389,6 +748,14 @@ const fetchPortfolios = async () => {
                   <span>{portfolio.lessonIds?.length || 0} 个教案</span>
                   <span>{portfolio.pptIds?.length || 0} 个PPT</span>
                 </div>
+                {(portfolio.subject || portfolio.stage || portfolio.grade || portfolio.category) && (
+                  <div className="flex items-center gap-2 text-xs text-gray-400 mb-3 flex-wrap">
+                    {portfolio.subject && <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">{portfolio.subject}</span>}
+                    {portfolio.stage && <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full">{portfolio.stage}</span>}
+                    {portfolio.grade && <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded-full">{portfolio.grade}</span>}
+                    {portfolio.category && <span className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full">{portfolio.category}</span>}
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-xs text-gray-400 mb-3">
                   <span>{formatDate(portfolio.createdAt)}</span>
                   <span>{portfolio.views || 0} 次浏览</span>
@@ -460,8 +827,62 @@ const fetchPortfolios = async () => {
         )}
       </div>
 
+      {/* 翻页按钮 */}
+      {!loading && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            上一页
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => i + 1)
+            .filter(page => {
+              // 显示当前页及前后各2页，加上第1页和最后1页
+              if (page === 1 || page === totalPages) return true;
+              if (Math.abs(page - currentPage) <= 2) return true;
+              return false;
+            })
+            .reduce<(number | 'ellipsis')[]>((acc, page, idx, arr) => {
+              if (idx > 0 && page - (arr[idx - 1] as number) > 1) {
+                acc.push('ellipsis');
+              }
+              acc.push(page);
+              return acc;
+            }, [])
+            .map((item, idx) =>
+              item === 'ellipsis' ? (
+                <span key={`ellipsis-${idx}`} className="px-2 py-2 text-sm text-gray-400">...</span>
+              ) : (
+                <button
+                  key={item}
+                  onClick={() => setCurrentPage(item)}
+                  className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    currentPage === item
+                      ? 'bg-primary-500 text-white border border-primary-500'
+                      : 'text-gray-600 bg-white border border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {item}
+                </button>
+              )
+            )}
+          <button
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            下一页
+          </button>
+          <span className="ml-3 text-sm text-gray-500">
+            共 {totalItems} 项，第 {currentPage}/{totalPages} 页
+          </span>
+        </div>
+      )}
+
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden">
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-800">创建作品集</h3>
@@ -494,6 +915,63 @@ const fetchPortfolios = async () => {
                   rows={3}
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
                 />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">学科</label>
+                  <select
+                    value={portfolioSubject}
+                    onChange={(e) => setPortfolioSubject(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">请选择学科</option>
+                    {subjects.filter(s => s !== '全部').map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">学段</label>
+                  <select
+                    value={portfolioStage}
+                    onChange={(e) => {
+                      const stage = e.target.value;
+                      setPortfolioStage(stage);
+                      // 学段变化时重置年级，并更新可选年级列表
+                      setPortfolioGrade('');
+                      if (stage && gradeOptionsByStage[stage]) {
+                        setAvailableGrades(gradeOptionsByStage[stage]);
+                      } else {
+                        setAvailableGrades([]);
+                      }
+                    }}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">请选择学段</option>
+                    {stages.filter(s => s !== '全部').map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">年级</label>
+                  <select
+                    value={portfolioGrade}
+                    onChange={(e) => setPortfolioGrade(e.target.value)}
+                    disabled={!portfolioStage}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="">{portfolioStage ? '请选择年级' : '请先选择学段'}</option>
+                    {availableGrades.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">分类</label>
+                  <select
+                    value={portfolioCategory}
+                    onChange={(e) => setPortfolioCategory(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">请选择分类</option>
+                    {categories.filter(c => c !== '全部').map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
@@ -576,7 +1054,7 @@ const fetchPortfolios = async () => {
       )}
 
       {previewPortfolio && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-6xl max-h-[90vh] overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <div>
@@ -606,7 +1084,7 @@ const fetchPortfolios = async () => {
                             <div>
                               <span className="font-medium text-gray-700">教学目标：</span>
                               <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">
-                                {Array.isArray(lesson.teachingGoals) ? lesson.teachingGoals.join('\n') : lesson.teachingGoals}
+                                {teachingGoalsToText(lesson.teachingGoals)}
                               </p>
                             </div>
                           )}
@@ -614,7 +1092,7 @@ const fetchPortfolios = async () => {
                             <div>
                               <span className="font-medium text-gray-700">教学重点：</span>
                               <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">
-                                {Array.isArray(lesson.keyPoints) ? lesson.keyPoints.join('\n') : lesson.keyPoints}
+                                {parseKeyPoints(lesson.keyPoints)}
                               </p>
                             </div>
                           )}
@@ -622,7 +1100,7 @@ const fetchPortfolios = async () => {
                             <div>
                               <span className="font-medium text-gray-700">教学过程：</span>
                               <div className="text-sm text-gray-600 mt-1 whitespace-pre-wrap bg-gray-50 p-3 rounded">
-                                {typeof lesson.teachingProcess === 'string' ? lesson.teachingProcess : JSON.stringify(lesson.teachingProcess, null, 2)}
+                                {parseTeachingProcess(lesson.teachingProcess)}
                               </div>
                             </div>
                           )}
@@ -656,7 +1134,12 @@ const fetchPortfolios = async () => {
                         </div>
                         <button
                           onClick={() => {
-                            if (ppt.content?.pages) {
+                            if (ppt.content?.html) {
+                              // HTML格式 → 打开HtmlDeckFullscreenModal全屏预览
+                              setHtmlDeckData({ html: ppt.content.html, title: ppt.title });
+                              setHtmlDeckFullscreenOpen(true);
+                            } else if (ppt.content?.pages) {
+                              // JSON格式 → 打开PPTModalPreview（带全屏）
                               setPreviewingPpt({ pages: ppt.content.pages, title: ppt.title });
                             } else {
                               showToast('暂无PPT内容', 'error');
@@ -689,6 +1172,19 @@ const fetchPortfolios = async () => {
           onClose={() => setPreviewingPpt(null)}
           pages={previewingPpt.pages}
           title={previewingPpt.title}
+          enableFullscreen={true}
+        />
+      )}
+
+      {htmlDeckFullscreenOpen && htmlDeckData && (
+        <HtmlDeckFullscreenModal
+          isOpen={htmlDeckFullscreenOpen}
+          onClose={() => {
+            setHtmlDeckFullscreenOpen(false);
+            setHtmlDeckData(null);
+          }}
+          html={htmlDeckData.html}
+          title={htmlDeckData.title}
         />
       )}
     </Layout>

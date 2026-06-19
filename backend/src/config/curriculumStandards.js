@@ -8,6 +8,7 @@ const curriculumStandards = {
     teachingObjectives: {
       name: '教学目标',
       weight: 25,
+      // 旧版三维目标评估（向后兼容）
       subDimensions: {
         knowledge: {
           name: '知识与技能',
@@ -38,7 +39,18 @@ const curriculumStandards = {
             { keyword: '兴趣习惯', score: 3, description: '培养学习兴趣和良好习惯' }
           ]
         }
-      }
+      },
+      // 新版：按核心素养维度评估标准
+      competencyCriteria: [
+        { keyword: '核心素养', score: 3, description: '教学目标体现学科核心素养要求' },
+        { keyword: '维度覆盖', score: 3, description: '目标覆盖多个核心素养维度' },
+        { keyword: '具体可测', score: 3, description: '目标具体、可观察、可测量' },
+        { keyword: '层次分明', score: 3, description: '目标体现层次性和递进性' },
+        { keyword: '学科特色', score: 3, description: '体现本学科独特的素养要求' },
+        { keyword: '行为动词', score: 3, description: '使用行为动词描述目标（如：说出、列出、解释等）' },
+        { keyword: '学情适切', score: 3, description: '目标符合学生认知水平和发展需求' },
+        { keyword: '维度目标', score: 4, description: '各维度目标之间有内在联系和整合' }
+      ]
     },
     teachingContent: {
       name: '教学内容',
@@ -171,10 +183,12 @@ const curriculumStandards = {
   },
   suggestions: {
     teachingObjectives: [
-      '教学目标应体现知识、能力、情感三维目标的整合',
+      '教学目标应基于学科核心素养维度设计',
+      '每个核心素养维度下设置1-3个具体教学目标',
       '目标描述应具体、可观测、可评价',
       '建议使用行为动词描述目标（如：说出、列出、解释等）',
-      '目标应基于课程标准和学生实际制定'
+      '目标应基于课程标准和学生实际制定',
+      '注意各维度之间的内在联系和整合'
     ],
     teachingContent: [
       '教学内容应紧扣课程标准和学科核心素养',

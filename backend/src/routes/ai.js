@@ -6,6 +6,9 @@
 const express = require('express');
 const router = express.Router();
 const AIService = require('../services/aiService');
+const { auth } = require('../middleware/auth');
+
+router.use(auth);
 
 /**
  * 获取AI服务状态和配置信息

@@ -1,75 +1,52 @@
 /**
- * 用户管理路由
- * 处理用户信息的查询、更新、删除等操作
+ * User management routes.
+ *
+ * 注意：已移除空壳路由 PUT /profile 和 PUT /password，
+ * 这些功能的完整实现在 authController 中：
+ *   PUT  /api/auth/profile      -> authController.updateProfile
+ *   POST /api/auth/change-password -> authController.changePassword
+ *
+ * 保留 GET /profile 和 GET /lessons 作为兼容性代理路由。
  */
 
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
+const { auth: authMiddleware } = require('../middleware/auth');
+const User = require('../models/User');
 
-const authMiddleware = (req, res, next) => {
+router.get('/profile', authMiddleware, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
         success: false,
-        message: '未授权访问'
+        code: 404,
+        message: '用户不存在'
       });
     }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-    req.user = decoded;
-    next();
+    res.json({
+      success: true,
+      message: '获取用户信息成功',
+      data: {
+        id: user.id,
+        account: user.username,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        school: user.school,
+        avatar: user.avatar,
+        createdAt: user.created_at
+      }
+    });
   } catch (error) {
-    res.status(401).json({
+    console.error('获取用户信息错误:', error);
+    res.status(500).json({
       success: false,
-      message: 'Token无效或已过期'
+      code: 500,
+      message: '服务器内部错误'
     });
   }
-};
-
-router.get('/profile', authMiddleware, (req, res) => {
-  res.json({
-    success: true,
-    message: '获取用户信息成功',
-    data: {
-      id: 1,
-      username: req.user.username || 'demo_user',
-      email: req.user.email,
-      role: req.user.role,
-      createdAt: new Date().toISOString()
-    }
-  });
-});
-
-router.put('/profile', authMiddleware, (req, res) => {
-  const { username, phone, avatar } = req.body;
-  
-  res.json({
-    success: true,
-    message: '用户信息更新成功',
-    data: {
-      username,
-      phone,
-      avatar
-    }
-  });
-});
-
-router.put('/password', authMiddleware, (req, res) => {
-  const { oldPassword, newPassword } = req.body;
-  
-  if (!oldPassword || !newPassword) {
-    return res.status(400).json({
-      success: false,
-      message: '请提供完整的密码信息'
-    });
-  }
-
-  res.json({
-    success: true,
-    message: '密码修改成功'
-  });
 });
 
 router.get('/lessons', authMiddleware, (req, res) => {

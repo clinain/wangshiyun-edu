@@ -3,13 +3,25 @@ import { useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
+import GeneratingProgressModal from '@/components/GeneratingProgressModal';
 import { lessonAPI } from '@/api';
+import { parseTeachingGoals } from '@/utils/teachingGoalsHelper';
+import type { TeachingGoalsData } from '@/types';
 
-const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治'];
-const grades = ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级', '初一', '初二', '初三', '高一', '高二', '高三'];
+// 学科列表与 Create.tsx 保持一致，按学段分类
+const primarySubjects = ['语文', '数学', '英语', '道德与法治', '科学', '信息科技', '音乐', '美术', '体育与健康', '劳动', '书法', '综合实践活动', '心理健康'];
+const middleSubjects = ['语文', '数学', '英语', '道德与法治', '历史', '地理', '物理', '化学', '生物学', '信息技术', '音乐', '美术', '体育与健康', '劳动', '心理健康', '综合实践活动'];
+const highSubjects = ['语文', '数学', '英语', '物理', '化学', '生物学', '历史', '地理', '思想政治', '通用技术', '信息技术', '音乐', '美术', '体育与健康', '劳动', '心理健康', '综合实践活动'];
+
+const primaryGrades = ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'];
+const middleGrades = ['七年级', '八年级', '九年级'];
+const highGrades = ['高一', '高二', '高三'];
 
 const GenerateLesson: React.FC = () => {
   const navigate = useNavigate();
+  const [stage, setStage] = useState<'primary' | 'middle' | 'high'>('primary');
+  const [subjects, setSubjects] = useState<string[]>(primarySubjects);
+  const [grades, setGrades] = useState<string[]>(primaryGrades);
   const [formData, setFormData] = useState({
     subject: '',
     grade: '',
@@ -18,16 +30,34 @@ const GenerateLesson: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const handleStageChange = (newStage: 'primary' | 'middle' | 'high') => {
+    setStage(newStage);
+    if (newStage === 'primary') {
+      setSubjects(primarySubjects);
+      setGrades(primaryGrades);
+    } else if (newStage === 'middle') {
+      setSubjects(middleSubjects);
+      setGrades(middleGrades);
+    } else {
+      setSubjects(highSubjects);
+      setGrades(highGrades);
+    }
+    setFormData((prev) => ({ ...prev, subject: '', grade: '' }));
+  };
   const [generatedLesson, setGeneratedLesson] = useState<{
+    id?: number;
     title: string;
     subject: string;
     grade: string;
-    teachingGoals: string[];
+    teachingGoals: TeachingGoalsData;
     keyPoints: string[];
     teachingProcess: Record<string, unknown> | string;
     assignments: string;
     summary: string;
   } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generatingStage, setGeneratingStage] = useState('');
 
   const handleChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -43,55 +73,67 @@ const GenerateLesson: React.FC = () => {
     }
 
     setLoading(true);
+    setGenerating(true);
+    setGeneratingStage('正在分析教学内容...');
     try {
+      // 模拟阶段更新
+      const stageTimer = setTimeout(() => setGeneratingStage('正在生成教学目标...'), 3000);
+      const stageTimer2 = setTimeout(() => setGeneratingStage('正在设计教学过程...'), 8000);
+      const stageTimer3 = setTimeout(() => setGeneratingStage('正在优化教案内容...'), 15000);
+      
       const result = await lessonAPI.generate({
         subject: formData.subject,
         grade: formData.grade,
         topic: formData.topic,
         title: formData.title || undefined,
       });
+      
+      clearTimeout(stageTimer);
+      clearTimeout(stageTimer2);
+      clearTimeout(stageTimer3);
+      
       setGeneratedLesson({
+        id: result.id,
         title: result.title,
         subject: result.subject,
         grade: result.grade,
-        teachingGoals: Array.isArray(result.teachingGoals) ? result.teachingGoals : [],
+        teachingGoals: parseTeachingGoals(result.teachingGoals),
         keyPoints: Array.isArray(result.keyPoints) ? result.keyPoints : [],
         teachingProcess: result.teachingProcess,
         assignments: result.assignments || '',
         summary: result.summary || '',
       });
+      // 后端已自动保存，留在当前页面让用户继续修改
     } catch (err) {
       setError((err as Error).message || '生成失败');
     } finally {
       setLoading(false);
+      setGenerating(false);
+      setGeneratingStage('');
     }
   };
 
   const handleSave = async () => {
     if (!generatedLesson) {
-      console.error('保存失败: generatedLesson 为 null');
       setError('教案数据不存在，请重新生成');
       return;
     }
 
-    console.log('保存教案数据:', {
-      title: generatedLesson.title,
-      subject: generatedLesson.subject,
-      grade: generatedLesson.grade,
-      teachingGoals: generatedLesson.teachingGoals,
-    });
+    // 如果后端已自动保存（有id），跳转到编辑页面
+    if (generatedLesson.id) {
+      navigate(`/lessons/${generatedLesson.id}/edit`);
+      return;
+    }
 
+    // 兜底：如果没有id，手动创建
     if (!generatedLesson.title || !generatedLesson.subject || !generatedLesson.grade) {
-      console.error('验证失败: 缺少必填字段', { title: generatedLesson.title, subject: generatedLesson.subject, grade: generatedLesson.grade });
       setError('教案数据不完整，请重新生成');
       return;
     }
 
     setLoading(true);
     try {
-      const teachingGoals = Array.isArray(generatedLesson.teachingGoals)
-        ? JSON.stringify(generatedLesson.teachingGoals)
-        : generatedLesson.teachingGoals || '[]';
+      const teachingGoals = JSON.stringify(generatedLesson.teachingGoals);
 
       const keyPoints = Array.isArray(generatedLesson.keyPoints)
         ? JSON.stringify(generatedLesson.keyPoints)
@@ -101,8 +143,7 @@ const GenerateLesson: React.FC = () => {
         ? JSON.stringify(generatedLesson.teachingProcess)
         : generatedLesson.teachingProcess || '{}';
 
-      console.log('发送保存请求...');
-      await lessonAPI.create({
+      const newLesson = await lessonAPI.create({
         title: generatedLesson.title,
         subject: generatedLesson.subject,
         grade: generatedLesson.grade,
@@ -112,10 +153,8 @@ const GenerateLesson: React.FC = () => {
         assignments: generatedLesson.assignments || '',
         summary: generatedLesson.summary || '',
       });
-      console.log('保存成功，跳转到教案列表');
-      navigate('/lessons');
+      navigate(`/lessons/${newLesson.id}/edit`);
     } catch (err) {
-      console.error('保存失败:', err);
       setError((err as Error).message || '保存失败');
     } finally {
       setLoading(false);
@@ -123,16 +162,28 @@ const GenerateLesson: React.FC = () => {
   };
 
   return (
-    <Layout 
-      title="AI生成教案" 
+    <Layout
+      title="AI生成教案"
       subtitle="智能生成教学方案"
       breadcrumbs={[
         { label: '首页', path: '/' },
-        { label: '我的备课', path: '/lessons' },
+        { label: '我的备课', path: '/teaching-preparation' },
         { label: '教案编写', path: '/lessons/create' },
         { label: 'AI生成教案' }
       ]}
     >
+      <GeneratingProgressModal
+        visible={generating}
+        title="AI智能生成教案中"
+        stage={generatingStage}
+        estimatedTime={180}
+        tips={[
+          'AI正在分析教学内容，请耐心等待...',
+          '正在根据课程标准生成教学目标...',
+          '正在设计完整的教学过程...',
+          '教案即将生成完成，请勿关闭页面...',
+        ]}
+      />
       <div className="max-w-4xl mx-auto">
         <div className="bg-gradient-to-r from-primary-500 to-primary-600 rounded-xl p-6 mb-6 text-white">
           <div className="flex items-start gap-4">
@@ -157,6 +208,25 @@ const GenerateLesson: React.FC = () => {
             )}
 
             <div className="space-y-6">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">学段 *</label>
+                <div className="flex gap-2">
+                  {(['primary', 'middle', 'high'] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => handleStageChange(s)}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        stage === s
+                          ? 'bg-primary-500 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {s === 'primary' ? '小学' : s === 'middle' ? '初中' : '高中'}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">学科 *</label>
@@ -221,14 +291,18 @@ const GenerateLesson: React.FC = () => {
             <div className="p-6 border-b border-gray-100 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-gray-800">AI生成结果</h3>
-                <p className="text-sm text-gray-500">以下是AI为您生成的教案内容，可以直接保存或修改后保存</p>
+                <p className="text-sm text-gray-500">
+                  {generatedLesson?.id
+                    ? '教案已自动保存，您可以继续修改或点击"去编辑"进行详细编辑'
+                    : '以下是AI为您生成的教案内容，可以保存后继续编辑'}
+                </p>
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setGeneratedLesson(null)}>
                   重新生成
                 </Button>
                 <Button loading={loading} onClick={handleSave}>
-                  保存教案
+                  {generatedLesson?.id ? '去编辑' : '保存教案'}
                 </Button>
               </div>
             </div>
@@ -265,28 +339,39 @@ const GenerateLesson: React.FC = () => {
               </div>
             </div>
 
-            {generatedLesson.teachingGoals && generatedLesson.teachingGoals.length > 0 && (
+            {generatedLesson.teachingGoals && generatedLesson.teachingGoals.dimensions && generatedLesson.teachingGoals.dimensions.length > 0 && (
               <div className="p-6 border-b border-gray-100">
-                <h4 className="text-sm font-medium text-gray-700 mb-3">教学目标</h4>
-                <ul className="space-y-2">
-                  {generatedLesson.teachingGoals.map((goal, index) => (
-                    <li key={index} className="flex items-start gap-2">
-                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center text-xs font-medium">
-                        {index + 1}
-                      </span>
-                      <input
-                        type="text"
-                        value={goal}
-                        onChange={(e) => {
-                          const newGoals = [...generatedLesson.teachingGoals];
-                          newGoals[index] = e.target.value;
-                          setGeneratedLesson((prev) => prev ? { ...prev, teachingGoals: newGoals } : null);
-                        }}
-                        className="flex-1 px-3 py-1 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
-                      />
-                    </li>
+                <h4 className="text-sm font-medium text-gray-700 mb-3">教学目标（基于核心素养维度）</h4>
+                <div className="space-y-4">
+                  {generatedLesson.teachingGoals.dimensions.map((dim, dimIndex) => (
+                    <div key={dim.id || dimIndex} className="border-l-4 border-primary-300 pl-4">
+                      <h5 className="text-xs font-semibold text-primary-700 mb-2">{dim.name}</h5>
+                      <ul className="space-y-1.5">
+                        {dim.goals.map((goal, goalIndex) => (
+                          <li key={goalIndex} className="flex items-start gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center text-xs font-medium">
+                              {goalIndex + 1}
+                            </span>
+                            <input
+                              type="text"
+                              value={goal}
+                              onChange={(e) => {
+                                const newDimensions = [...generatedLesson.teachingGoals.dimensions];
+                                newDimensions[dimIndex] = {
+                                  ...newDimensions[dimIndex],
+                                  goals: [...newDimensions[dimIndex].goals],
+                                };
+                                newDimensions[dimIndex].goals[goalIndex] = e.target.value;
+                                setGeneratedLesson((prev) => prev ? { ...prev, teachingGoals: { version: 2, dimensions: newDimensions } } : null);
+                              }}
+                              className="flex-1 px-3 py-1 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ))}
-                </ul>
+                </div>
               </div>
             )}
 

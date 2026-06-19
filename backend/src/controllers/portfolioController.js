@@ -3,10 +3,12 @@
  * 处理作品集的创建、管理和导出
  */
 
+const fs = require('fs');
 const Portfolio = require('../models/Portfolio');
 const Lesson = require('../models/Lesson');
 const PPTRecord = require('../models/PPTRecord');
 const ExportService = require('../services/exportService');
+const Favorite = require('../models/Favorite');
 
 /**
  * 获取公开作品集列表
@@ -14,11 +16,17 @@ const ExportService = require('../services/exportService');
  */
 const getPublicPortfolios = async (req, res) => {
     try {
-        const { page = 1, pageSize = 10 } = req.query;
+        const { page = 1, pageSize = 10, keyword, subject, grade, category, sortBy, sortOrder } = req.query;
 
         const result = await Portfolio.findPublic({
             page: parseInt(page),
-            pageSize: parseInt(pageSize)
+            pageSize: parseInt(pageSize),
+            keyword,
+            subject,
+            grade,
+            category,
+            sortBy,
+            sortOrder
         });
 
         res.json({
@@ -47,7 +55,7 @@ const getPublicPortfolios = async (req, res) => {
 const createPortfolio = async (req, res) => {
     try {
         const userId = req.user?.id;
-        const { name, description, lessonIds, pptIds, coverUrl, isPublic } = req.body;
+        const { name, description, subject, stage, grade, category, lessonIds, pptIds, coverUrl, isPublic } = req.body;
 
         // 验证必填字段
         if (!name) {
@@ -89,6 +97,10 @@ const createPortfolio = async (req, res) => {
             userId,
             name,
             description,
+            subject,
+            stage,
+            grade,
+            category,
             lessonIds: validLessonIds,
             pptIds: validPptIds,
             coverUrl,
@@ -120,11 +132,15 @@ const createPortfolio = async (req, res) => {
 const getPortfolioList = async (req, res) => {
     try {
         const userId = req.user?.id;
-        const { page = 1, pageSize = 10 } = req.query;
+        const { page = 1, pageSize = 10, keyword, subject, grade, category } = req.query;
 
         const result = await Portfolio.findByUser(userId, {
             page: parseInt(page),
-            pageSize: parseInt(pageSize)
+            pageSize: parseInt(pageSize),
+            keyword,
+            subject,
+            grade,
+            category
         });
 
         res.json({
@@ -397,9 +413,9 @@ const sharePortfolio = async (req, res) => {
         // 增加分享次数
         await Portfolio.incrementShareCount(id);
 
-        // 生成分享链接
+        // 生成 HashRouter 可直接打开的前端分享链接
         const baseUrl = `${req.protocol}://${req.get('host')}`;
-        const shareUrl = `${baseUrl}/portfolios/${id}/view`;
+        const shareUrl = `${baseUrl}/#/portfolios/${id}/view`;
 
         res.json({
             success: true,
@@ -509,10 +525,30 @@ const exportPortfolio = async (req, res) => {
         // 导出为ZIP
         const zipPath = await ExportService.exportToZip(id);
 
+        // ✅ 新增：自动添加到"我的资源"（创建收藏记录）
+        if (userId) {
+            try {
+                await Favorite.createPortfolioFavorite(userId, id);
+                console.log(`⭐ 已自动收藏作品集: ${portfolio.name}`);
+            } catch (favError) {
+                // 收藏失败不影响下载体验
+                console.error('自动收藏作品集失败:', favError);
+            }
+        }
+
         // 发送文件
         res.download(zipPath, `${portfolio.name}.zip`, (err) => {
             if (err) {
                 console.error('发送文件失败:', err);
+            }
+            // 发送完成后清理临时文件
+            try {
+                if (fs.existsSync(zipPath)) {
+                    fs.unlinkSync(zipPath);
+                    console.log(`🧹 已清理临时导出文件: ${zipPath}`);
+                }
+            } catch (cleanupErr) {
+                console.error('清理临时文件失败:', cleanupErr.message);
             }
         });
 

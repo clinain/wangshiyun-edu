@@ -1,5 +1,7 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import NotificationBell from '../NotificationBell';
 
 interface BreadcrumbItem {
   label: string;
@@ -17,13 +19,12 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ title, breadcrumbs, onToggleSidebar, isMobile = false }) => {
   const { user, logout } = useAuth();
-  const navigate = (path: string) => {
-    window.location.href = path;
-  };
+  const navigate = useNavigate();
+  const visibleBreadcrumbs = isMobile ? breadcrumbs?.slice(-1) : breadcrumbs;
 
   return (
-    <header className={`${isMobile ? 'h-[48px]' : 'h-[64px]'} bg-pink-800 border-b border-pink-700 flex items-center justify-between ${isMobile ? 'px-4' : 'px-6'} sticky top-0 z-30`}>
-      <div className="flex items-center gap-3">
+    <header className={`${isMobile ? 'h-[48px]' : 'h-[64px]'} shrink-0 bg-pink-800 border-b border-pink-700 flex items-center justify-between gap-2 overflow-visible ${isMobile ? 'px-3' : 'px-6'} z-[100]`}>
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
         {/* 移动端汉堡菜单按钮 */}
         {isMobile && (
           <button
@@ -36,24 +37,24 @@ const Header: React.FC<HeaderProps> = ({ title, breadcrumbs, onToggleSidebar, is
             </svg>
           </button>
         )}
-        <div className="flex flex-col gap-1">
-          {breadcrumbs && breadcrumbs.length > 0 ? (
-            <nav className="flex items-center gap-1 text-sm">
-              {breadcrumbs.map((item, index) => (
+        <div className="flex min-w-0 flex-col gap-1">
+          {visibleBreadcrumbs && visibleBreadcrumbs.length > 0 ? (
+            <nav className="flex min-w-0 items-center gap-1 overflow-hidden text-sm">
+              {visibleBreadcrumbs.map((item, index) => (
                 <div key={index} className="flex items-center gap-1">
                   {item.path ? (
                     <button
                       onClick={() => navigate(item.path!)}
-                      className="text-white/80 hover:text-white transition-colors"
+                      className="block max-w-[48vw] truncate text-white/80 transition-colors hover:text-white sm:max-w-none"
                     >
-                      {isMobile && index === breadcrumbs.length - 1 ? item.label.slice(0, 6) : item.label}
+                      {item.label}
                     </button>
                   ) : (
-                    <span className="text-white font-medium">
-                      {isMobile && index === breadcrumbs.length - 1 ? item.label.slice(0, 6) : item.label}
+                    <span className="block max-w-[48vw] truncate font-medium text-white sm:max-w-none">
+                      {item.label}
                     </span>
                   )}
-                  {index < breadcrumbs.length - 1 && (
+                  {index < visibleBreadcrumbs.length - 1 && (
                     <svg className="w-4 h-4 text-white/60 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
@@ -67,8 +68,11 @@ const Header: React.FC<HeaderProps> = ({ title, breadcrumbs, onToggleSidebar, is
         </div>
       </div>
       
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-shrink-0 items-center gap-1 sm:gap-3">
+        {/* 通知铃铛 */}
+        <NotificationBell />
+
+        <div className="flex items-center gap-1 sm:gap-2">
           <div className={`${isMobile ? 'w-8 h-8' : 'w-10 h-10'} bg-white/20 rounded-full flex items-center justify-center`}>
             <span className={`text-white font-semibold ${isMobile ? 'text-xs' : 'text-sm'}`}>
               {user?.name?.charAt(0) || 'W'}

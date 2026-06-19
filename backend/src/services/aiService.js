@@ -5,6 +5,7 @@
  */
 
 const axios = require('axios');
+const TeachingProcessAdapter = require('./teachingProcessAdapter');
 
 // 主AI提供商配置（优先使用）
 const PRIMARY_PROVIDER = process.env.AI_PRIMARY_PROVIDER || 'zhipu';
@@ -60,7 +61,7 @@ const AI_CONFIG = {
     maxTokens: 8000,
     temperature: 0.7,
     topP: 0.9,
-    timeout: 120000,  // 超时时间120秒
+    timeout: 300000,  // 超时时间300秒（5分钟），AI生成详细PPT内容（含图片搜索）需要90-215秒
     maxRetries: 2    // 最大重试次数
 };
 
@@ -667,7 +668,7 @@ class AIService {
 请根据提供的信息，生成一份极其详细、完整、丰富的教案。教案要像一篇完整的教学设计文档，内容要详尽、深入、有血有肉。
 
 【教案要求】
-1. 教学目标（至少5-8个，详细阐述知识与技能、过程与方法、情感态度价值观三维目标）
+1. 教学目标（基于学科核心素养维度设计，每个维度1-3个具体目标，至少覆盖2-3个维度）
 2. 教学重难点（至少3-5个，要具体说明重点和难点）
 3. 教学过程（极其详细，每个环节都要有具体内容、时间分配、教师活动、学生活动、设计意图）
    - 导入环节：设计有趣的情境或问题，激发学生兴趣
@@ -679,11 +680,18 @@ class AIService {
 
 【格式要求】
 请用JSON格式返回，包含以下字段（每个字段的内容都要详细、完整、有深度）：
-- teachingGoals: 教学目标数组（每个目标都要详细描述，至少100字）
+- teachingGoals: 教学目标对象，格式为 { "version": 2, "dimensions": [{ "id": "维度ID", "name": "维度名称", "goals": ["目标1", "目标2"] }] }
 - keyPoints: 教学重难点数组（每个要点都要详细说明）
 - teachingProcess: 教学过程对象，详细描述每个环节（每个环节至少200字）
 - assignments: 课后作业（详细说明作业内容和要求）
-- summary: 教学总结（至少100字的教学反思和建议）`;
+- summary: 教学总结（至少100字的教学反思和建议）
+
+【重要说明】
+- teachingGoals必须是对象格式，包含version和dimensions字段
+- dimensions数组中每个元素代表一个核心素养维度
+- 每个维度包含id、name和goals数组
+- 至少覆盖2-3个核心素养维度
+- 每个维度下设置1-3个具体目标`;
 
         const userPrompt = `请为${subject}学科设计一份详细完整的教案：
 - 教学主题：${topic}
@@ -757,9 +765,13 @@ class AIService {
         // 解析教案数据
         const goals = this.parseJSON(teachingGoals, []);
         const points = this.parseJSON(keyPoints, []);
-        const process = this.parseJSON(teachingProcess, {});
         const assignList = typeof assignments === 'string' ? assignments : (assignments || '');
         const summaryText = typeof summary === 'string' ? summary : (summary || '');
+
+        // 使用 TeachingProcessAdapter 标准化教学过程数据
+        const normalizedProcess = TeachingProcessAdapter.normalize(teachingProcess);
+        const processText = TeachingProcessAdapter.toDisplayText(normalizedProcess);
+        const sectionInfo = TeachingProcessAdapter.getSectionInfo();
 
         // 如果AI不可用，回退到模板生成
         if (!this.isAvailable()) {
@@ -768,48 +780,74 @@ class AIService {
             return PPTService.generatePPT(lessonData);
         }
 
-        const systemPrompt = `你是一位资深的教学设计师和PPT视觉设计专家，专门为课堂教学设计高质量的演示文稿。
+        const systemPrompt = `你是一位教学设计师和课件制作专家，专门为课堂教学设计按照教学过程组织的演示文稿。
 
-你的核心任务：从教案中提取适合课堂展示的内容，生成PPT幻灯片结构。每个幻灯片都应该像课堂上实际使用的投影课件一样——内容详实、重点突出、适合学生观看。
+【核心理念】
+你生成的PPT是一份"按照教学过程设计的课堂演示文稿"。它严格遵循教学过程的四个环节来组织内容，每个环节清晰标识，让教师在课堂上能够按照教学设计的节奏有序推进教学。
+
+【结构要求——严格按教学过程组织】
+PPT必须严格按照以下四个教学环节组织内容：
+
+1. 课堂导入（第1环节）：创设情境，引入新课
+2. 新课讲授（第2环节）：讲解知识点，案例分析
+3. 巩固练习（第3环节）：练习题，即时检测
+4. 课堂总结（第4环节）：知识框架，要点回顾
+
+每个环节包含1-8个内容页面，内容页面的类型根据教学需要灵活选择。
+
+【页面类型】
+- cover: 封面页（课程标题、学科、年级）
+- content: 内容页（知识点讲解、要点展示、概念阐述）
+- example: 案例/示例页（例题、实验、案例分析）
+- thinking: 思考讨论页（问题、讨论题、思考活动）
+- practice: 练习页（练习题、即时检测）
+- summary: 总结页（知识框架、要点回顾）
+- end: 结束页
+
+注意：不要生成toc（教学流程目录）和section（环节标识）类型的页面，直接生成内容页面。
 
 【设计原则】
-1. 这是学生在课堂上看到的投影课件，不是教师的教案！
-2. 呈现学生需要掌握的知识内容，每个知识点要详细展开
+1. 这是学生在课堂上看到的投影课件，内容要详实、重点突出
+2. 每个slide必须包含 section 字段，标注该页面所属的教学环节（introduction/mainContent/practice/summary）
 3. 每页幻灯片标题简短有力（不超过15个字）
-4. 每页内容要充实详细，使用要点式呈现（每页4-8个要点，每个要点可以包含详细说明，50-80字）
+4. 每页内容要充实详细，使用要点式呈现（每页3-8个要点）
 5. 核心知识点要深入讲解，包括定义、原理、例子、应用等方面
 6. 案例要具体完整，包含背景、过程、结论
-7. 适当使用对比、分类、流程等方式组织内容
-8. 每个知识点都要体现"是什么-为什么-怎么用"的完整逻辑
+7. 教学目标、教学重难点等教学设计信息可以直接展示，不需要隐藏
+8. 内容要体现"是什么-为什么-怎么用"的完整逻辑
 
-【严格禁止】以下内容绝对不能作为独立的幻灯片页面出现：
-- 禁止出现"教学目标"页面
-- 禁止出现"教学重点"或"教学难点"页面
-- 禁止出现"教学方法"页面
-- 禁止出现"教师活动"或"学生活动"页面
-- 禁止出现"教学准备"页面
-- 禁止出现"课后作业"页面
-- 禁止出现"教学反思"页面
-这些信息仅供你设计内容时参考，你应该将它们转化为具体的课堂展示内容。例如：将"教学目标"转化为具体的知识点讲解页面，将"教学重点"转化为详细的内容页。
+【内容详细度要求——非常重要】
+每个知识点需要详细展开说明，包括：
+1. 核心概念的详细解释（用通俗易懂的语言阐述定义和内涵）
+2. 具体的例子或案例（贴近学生生活的实际场景）
+3. 关键要点的深入分析（为什么重要、如何理解）
+4. 与实际教学的结合点（如何帮助学生理解和记忆）
 
-【幻灯片类型】
-- cover: 封面页（课程标题+年级学科）
-- content: 内容页（核心知识点、关键概念、重要公式等）
-- example: 案例页（典型例题、关键案例、实际应用）
-- thinking: 思考页（思考题、讨论题、探究问题）
-- summary: 总结页（知识框架、要点回顾、思维导图式总结）
-- practice: 练习页（课堂练习、即时检测）
-- end: 结束页（谢谢/思考延伸）
+每页内容要求：
+- 每个知识点至少包含2-3句话的详细描述，不能只写一句话的标题式内容
+- 提供具体的教学案例或生活实例，让学生能够通过例子理解抽象概念
+- 包含教师讲解要点和学生活动建议
+- 避免空洞的标题式内容，要有实质性的教学内容
+- 每个slide的content字段要包含详细的教学内容，而不是简单的标题列表
+- 要求每个知识点都有完整的描述、示例和教学指导
+
+【内容要求】
+- 允许展示教学目标、教学重难点等教学设计信息（可以放在相关环节的内容页中）
+- 内容要具体、有教学价值，不要泛泛而谈
+- 每个知识点要有深度，不要只列标题
+- 确保PPT内容足够详细，学生仅通过PPT就能理解本节课的核心知识
+- 每个要点必须是完整的教学内容段落，包含解释、例子和应用，不能是简短的标题
 
 请用严格的JSON格式返回，包含以下结构：
 {
   "slides": [
     {
-      "type": "cover|content|example|thinking|summary|practice|end",
+      "type": "cover|toc|section|content|example|thinking|practice|summary|end",
+      "section": "introduction|mainContent|practice|summary",
       "title": "幻灯片标题（简短有力）",
       "points": ["要点1", "要点2", ...],
       "notes": "演讲者备注（教师课堂引导语或讲解思路）",
-      "imageKeywords": "用于搜索配图的英文关键词（2-3个词，如 organic chemistry molecular）"
+      "imageKeywords": "用于搜索配图的英文关键词（2-3个词）"
     }
   ]
 }
@@ -817,20 +855,19 @@ class AIService {
 【图片关键词要求】
 - 每个页面的imageKeywords字段用于自动搜索配图
 - 使用英文关键词，2-3个词，简洁准确
-- cover页：使用学科相关的主题图片关键词（如 chemistry laboratory）
+- cover页：使用学科相关的主题图片关键词
 - content/example页：使用与知识点相关的具体图片关键词
-- thinking页：使用引发思考的图片关键词（如 question thinking）
-- summary/practice/end页：可以留空字符串""
+- thinking页：使用引发思考的图片关键词
+- section/toc/summary/practice/end页：可以留空字符串""
 - 关键词要与该页内容高度相关
 
 【重要提醒】
 - slides数组中的第一个元素必须是type为"cover"的封面页
 - 最后一个元素必须是type为"end"的结束页
-- 每个页面的points数组中，每个要点要精炼、适合投影展示
-- 每个页面必须包含imageKeywords字段
+- 每个slide必须包含section字段，标注所属教学环节
 - 只输出JSON，不要输出任何其他文字`;
 
-        const userPrompt = `请根据以下${subject}（${grade}）教案，设计一份课堂展示PPT：
+        const userPrompt = `请根据以下${subject}（${grade}）教案，按照教学过程设计一份课堂演示PPT：
 
 【课程信息】
 - 课题：${title}
@@ -841,22 +878,24 @@ ${goals.length > 0 ? `【教学目标】\n${goals.map((g, i) => `${i + 1}. ${g}`
 
 ${points.length > 0 ? `【教学重难点】\n${points.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
 
-${process.introduction ? `【课堂导入】\n${process.introduction}` : ''}
-${process.mainContent ? `【新课讲授】\n${process.mainContent}` : ''}
-${process.practice ? `【巩固练习】\n${process.practice}` : ''}
-${process.summary ? `【课堂总结】\n${process.summary}` : ''}
+${processText ? `【教学过程】\n${processText}` : ''}
+
 ${assignList ? `【课后作业】\n${assignList}` : ''}
+
 ${summaryText ? `【教学总结】\n${summaryText}` : ''}
 
 【设计要求】
-1. 提取教案中的核心知识点，每个知识点要详细展开讲解（包括定义、原理、特点、应用场景等）
-2. 不要包含教学方法、教师活动、学生活动等教学设计信息
-3. 关键概念和公式要突出展示，附带详细解释
-4. 如果有典型案例，要单独成页展示，包含完整的分析过程
-5. 设计1-2个引导思考的问题页
-6. 总结页要用清晰的结构回顾本节课核心内容
-7. 内容要充实，每个幻灯片的知识点要有深度，不要只列标题
-8. 确保PPT内容足够详细，学生仅通过PPT就能理解本节课的核心知识`;
+1. 严格按照教学过程的四个环节（课堂导入→新课讲授→巩固练习→课堂总结）组织PPT内容
+2. 每个环节以 section 类型页面开头，明确标注环节名称
+3. 提取教案中的核心知识点，每个知识点要详细展开讲解，包含概念解释、具体例子、应用场景
+4. 教学目标、重难点等信息可以在相关环节中直接展示
+5. 关键概念和公式要突出展示，附带详细解释和实际例子
+6. 如果有典型案例，使用 example 类型页面展示
+7. 设计思考讨论页和练习页，促进学生互动
+8. 总结页要用清晰的结构回顾本节课核心内容
+9. 内容要充实，每个幻灯片的知识点要有深度
+10. 每个要点必须是完整的教学内容，至少包含2-3句话的详细描述，包含概念解释+例子+教学指导，禁止只写简短的标题式内容
+11. 内容要让学生仅通过PPT就能理解本节课的核心知识，每个知识点都要有实质性的教学内容`;
 
         try {
             console.log('🤖 正在调用AI设计PPT内容...');
@@ -927,10 +966,19 @@ ${summaryText ? `【教学总结】\n${summaryText}` : ''}
                 throw new Error('AI返回的PPT结构无效');
             }
 
+            // 过滤掉 toc 和 section 类型的页面
+            if (pptDesign.slides && Array.isArray(pptDesign.slides)) {
+              pptDesign.slides = pptDesign.slides.filter(s => s.type !== 'toc' && s.type !== 'section');
+            }
+
             // 将AI设计的slides转换为系统PPT格式
             const pages = pptDesign.slides.map((slide, index) => {
+                const slideType = slide.type || 'content';
+                const slideSection = slide.section || '';
+
                 const page = {
-                    type: slide.type || 'content',
+                    type: slideType,
+                    section: slideSection,
                     title: slide.title || `页面 ${index + 1}`,
                     content: {},
                     notes: slide.notes || '',
@@ -939,7 +987,7 @@ ${summaryText ? `【教学总结】\n${summaryText}` : ''}
                     imageUrl: null
                 };
 
-                switch (slide.type) {
+                switch (slideType) {
                     case 'cover':
                         page.layout = 'cover';
                         page.content = {
@@ -949,6 +997,29 @@ ${summaryText ? `【教学总结】\n${summaryText}` : ''}
                             date: new Date().toLocaleDateString('zh-CN'),
                             time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
                             fullDateTime: new Date().toLocaleString('zh-CN')
+                        };
+                        break;
+                    case 'toc':
+                        page.layout = 'toc';
+                        page.content = {
+                            items: sectionInfo.map((s, i) => ({
+                                number: i + 1,
+                                name: s.name,
+                                description: s.description
+                            })),
+                            currentStep: 0
+                        };
+                        break;
+                    case 'section':
+                        // 确定环节序号
+                        const sectionIndex = sectionInfo.findIndex(s => s.key === slideSection);
+                        const sectionName = slide.title || (sectionIndex >= 0 ? sectionInfo[sectionIndex].name : '');
+                        const sectionNumber = sectionIndex >= 0 ? sectionIndex + 1 : 1;
+                        page.layout = 'section';
+                        page.content = {
+                            sectionNumber: sectionNumber,
+                            sectionName: sectionName,
+                            sectionDescription: sectionIndex >= 0 ? sectionInfo[sectionIndex].description : ''
                         };
                         break;
                     case 'end':
@@ -964,7 +1035,7 @@ ${summaryText ? `【教学总结】\n${summaryText}` : ''}
                     case 'summary':
                     case 'practice':
                     default:
-                        page.layout = slide.type;
+                        page.layout = slideType;
                         page.content = {
                             items: (slide.points || []).map((point, i) => ({
                                 number: i + 1,
@@ -1064,14 +1135,6 @@ ${summaryText ? `【教学总结】\n${summaryText}` : ''}
             title: title || '教案PPT',
             content: [`${grade} - ${subject}`, new Date().toLocaleDateString('zh-CN')],
             notes: '封面页展示课程基本信息'
-        });
-
-        // 目录页
-        pages.push({
-            pageNumber: pageNumber++,
-            title: '目录',
-            content: ['1. 教学目标', '2. 教学重难点', '3. 课堂导入', '4. 新课讲授', '5. 巩固练习', '6. 课堂总结', '7. 课后作业'],
-            notes: '本页展示课程大纲'
         });
 
         // 教学目标页
@@ -1220,14 +1283,26 @@ ${summaryText ? `【教学总结】\n${summaryText}` : ''}
      * 获取模拟教案数据
      */
     static getMockLesson(subject, grade, topic) {
+        // 获取学科的核心素养维度配置
+        const { getDimensionConfig, getStageByGrade: getStage } = require('../config/subjectsConfig');
+        const stage = getStage(grade) || 'middle';
+        const dimConfig = getDimensionConfig(subject, stage);
+
+        // 基于维度配置生成模拟教学目标
+        const dimensions = dimConfig.dimensions.slice(0, 3).map(dim => ({
+            id: dim.id,
+            name: dim.name,
+            goals: [
+                `理解${topic}相关的${dim.name}核心要求`,
+                `能够运用${topic}知识体现${dim.name}素养`
+            ]
+        }));
+
         return {
-            teachingGoals: [
-                `知识与技能：理解${topic}的基本概念和定义，掌握${topic}的核心原理和应用方法`,
-                `过程与方法：通过观察、实验、讨论等方式，培养学生探究${topic}的能力`,
-                `情感态度与价值观：激发学生对${subject}学科的兴趣，培养科学探究精神`,
-                `能力目标：能够运用${topic}知识解决实际问题`,
-                `思维目标：培养学生的逻辑思维和创新思维能力`
-            ],
+            teachingGoals: {
+                version: 2,
+                dimensions
+            },
             keyPoints: [
                 `重点：${topic}的定义、性质和基本应用`,
                 `重点：${topic}与相关知识的联系与区别`,

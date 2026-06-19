@@ -16,6 +16,10 @@ class Portfolio {
             userId,
             name,
             description = null,
+            subject = null,
+            stage = null,
+            grade = null,
+            category = null,
             lessonIds = null,
             pptIds = null,
             coverUrl = null,
@@ -27,9 +31,10 @@ class Portfolio {
 
         const sql = `
             INSERT INTO portfolios (
-                user_id, name, description, lesson_ids, ppt_ids,
+                user_id, name, description, subject, stage, grade, category,
+                lesson_ids, ppt_ids,
                 cover_url, share_count, is_public, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, NOW(), NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(), NOW())
         `;
 
         try {
@@ -37,6 +42,10 @@ class Portfolio {
                 userId || null,
                 name || null,
                 description || null,
+                subject || null,
+                stage || null,
+                grade || null,
+                category || null,
                 lessonIdsJson || null,
                 pptIdsJson || null,
                 coverUrl || null,
@@ -48,6 +57,10 @@ class Portfolio {
                 userId,
                 name,
                 description,
+                subject,
+                stage,
+                grade,
+                category,
                 lessonIds: lessonIds || [],
                 pptIds: pptIds || [],
                 shareCount: 0,
@@ -66,28 +79,47 @@ class Portfolio {
      * @returns {Promise<Object>} 作品集列表和分页信息
      */
     static async findByUser(userId, options = {}) {
-        const { page = 1, pageSize = 10, publicOnly = false } = options;
+        const { page = 1, pageSize = 10, publicOnly = false, keyword = null, subject = null, grade = null, category = null } = options;
         const offset = (page - 1) * pageSize;
+        const params = [];
 
         let whereClause = 'WHERE user_id = ?';
+        params.push(userId);
         if (publicOnly) {
-            whereClause = 'WHERE user_id = ? AND is_public = 1';
+            whereClause += ' AND is_public = 1';
+        }
+        if (keyword) {
+            whereClause += ' AND (name LIKE ? OR description LIKE ?)';
+            params.push(`%${keyword}%`, `%${keyword}%`);
+        }
+        if (subject) {
+            whereClause += ' AND subject = ?';
+            params.push(subject);
+        }
+        if (grade) {
+            whereClause += ' AND grade = ?';
+            params.push(grade);
+        }
+        if (category) {
+            whereClause += ' AND category = ?';
+            params.push(category);
         }
 
         try {
             const countSql = `SELECT COUNT(*) as total FROM portfolios ${whereClause}`;
-            const [countResult] = await db.query(countSql, [userId]);
+            const [countResult] = await db.query(countSql, params);
             const total = countResult.total;
 
             const listSql = `
-                SELECT id, user_id, name, description, lesson_ids, ppt_ids,
-                       cover_url, share_count, is_public, view_count, created_at, updated_at
+                SELECT id, user_id, name, description, subject, stage, grade, category,
+                       lesson_ids, ppt_ids, cover_url, share_count, is_public,
+                       view_count, created_at, updated_at
                 FROM portfolios
                 ${whereClause}
                 ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
             `;
-            const portfolios = await db.query(listSql, [userId, pageSize, offset]);
+            const portfolios = await db.query(listSql, [...params, pageSize, offset]);
 
             // 解析JSON字段
             const parsedPortfolios = portfolios.map(p => {
@@ -119,6 +151,10 @@ class Portfolio {
                 return {
                     ...p,
                     userId: p.user_id,
+                    subject: p.subject,
+                    stage: p.stage,
+                    grade: p.grade,
+                    category: p.category,
                     isPublic: p.is_public === 1,
                     lessonIds: parsedLessonIds,
                     pptIds: parsedPptIds
@@ -157,7 +193,8 @@ class Portfolio {
      */
     static async findByUserAndName(userId, name) {
         const sql = `
-            SELECT id, user_id, name, description, lesson_ids, ppt_ids,
+            SELECT id, user_id, name, description, subject, stage, grade, category,
+                   lesson_ids, ppt_ids,
                    cover_url, share_count, is_public, view_count, created_at, updated_at
             FROM portfolios
             WHERE user_id = ? AND name = ?
@@ -186,7 +223,7 @@ class Portfolio {
      * @returns {Promise<Object>} 作品集列表和分页信息
      */
     static async findPublic(options = {}) {
-        const { page = 1, pageSize = 10, keyword } = options;
+        const { page = 1, pageSize = 10, keyword, subject, grade, category, sortBy = 'created_at', sortOrder = 'DESC' } = options;
         const offset = (page - 1) * pageSize;
 
         try {
@@ -197,17 +234,35 @@ class Portfolio {
                 whereClause += ' AND (name LIKE ? OR description LIKE ?)';
                 params.push(`%${keyword}%`, `%${keyword}%`);
             }
+            if (subject) {
+                whereClause += ' AND subject = ?';
+                params.push(subject);
+            }
+            if (grade) {
+                whereClause += ' AND grade = ?';
+                params.push(grade);
+            }
+            if (category) {
+                whereClause += ' AND category = ?';
+                params.push(category);
+            }
 
             const countSql = `SELECT COUNT(*) as total FROM portfolios ${whereClause}`;
             const [countResult] = await db.query(countSql, params);
             const total = countResult.total;
 
+            // 验证排序字段，防止 SQL 注入
+            const allowedSortFields = ['created_at', 'share_count', 'view_count', 'name'];
+            const safeSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'created_at';
+            const safeSortOrder = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
             const listSql = `
-                SELECT id, user_id, name, description, lesson_ids, ppt_ids,
-                       cover_url, share_count, view_count, is_public, created_at, updated_at
+                SELECT id, user_id, name, description, subject, stage, grade, category,
+                       lesson_ids, ppt_ids, cover_url, share_count, view_count,
+                       is_public, created_at, updated_at
                 FROM portfolios
                 ${whereClause}
-                ORDER BY share_count DESC, created_at DESC
+                ORDER BY ${safeSortBy} ${safeSortOrder}
                 LIMIT ? OFFSET ?
             `;
             const portfolios = await db.query(listSql, [...params, pageSize, offset]);
@@ -241,6 +296,10 @@ class Portfolio {
                     userId: p.user_id,
                     name: p.name,
                     description: p.description,
+                    subject: p.subject,
+                    stage: p.stage,
+                    grade: p.grade,
+                    category: p.category,
                     lessonIds: parsedLessonIds,
                     pptIds: parsedPptIds,
                     coverUrl: p.cover_url,
@@ -274,7 +333,8 @@ class Portfolio {
      */
     static async findById(id) {
         const sql = `
-            SELECT id, user_id, name, description, lesson_ids, ppt_ids,
+            SELECT id, user_id, name, description, subject, stage, grade, category,
+                   lesson_ids, ppt_ids,
                    cover_url, share_count, view_count, is_public, created_at, updated_at
             FROM portfolios
             WHERE id = ?
@@ -316,6 +376,10 @@ class Portfolio {
                 userId: portfolio.user_id,
                 name: portfolio.name,
                 description: portfolio.description,
+                subject: portfolio.subject,
+                stage: portfolio.stage,
+                grade: portfolio.grade,
+                category: portfolio.category,
                 lessonIds: parsedLessonIds,
                 pptIds: parsedPptIds,
                 coverUrl: portfolio.cover_url,
@@ -341,7 +405,7 @@ class Portfolio {
         const fields = [];
         const values = [];
 
-        const allowedFields = ['name', 'description', 'coverUrl', 'isPublic'];
+        const allowedFields = ['name', 'description', 'subject', 'stage', 'grade', 'category', 'coverUrl', 'isPublic'];
         const fieldMap = {
             'coverUrl': 'cover_url',
             'isPublic': 'is_public'

@@ -239,14 +239,14 @@ const KnowledgeBase: React.FC = () => {
                     </div>
                     <p className="mt-3 text-sm text-gray-500 line-clamp-2">{subject.description}</p>
                     <div className="mt-3 flex flex-wrap gap-1">
-                      {subject.tags.slice(0, 3).map((tag) => (
+                      {(subject.tags || []).slice(0, 3).map((tag) => (
                         <span key={tag} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
                           {tag}
                         </span>
                       ))}
-                      {subject.tags.length > 3 && (
+                      {(subject.tags || []).length > 3 && (
                         <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
-                          +{subject.tags.length - 3}
+                          +{(subject.tags || []).length - 3}
                         </span>
                       )}
                     </div>
@@ -261,6 +261,15 @@ const KnowledgeBase: React.FC = () => {
         {viewMode === 'search' && (
           <div>
             <div className="mb-4">
+              <button
+                onClick={handleBack}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg border border-gray-300 transition-colors mb-3"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                返回知识库
+              </button>
               <h2 className="text-lg font-semibold text-gray-900">
                 搜索结果："{searchKeyword}"（共 {searchResults.length} 个学科匹配）
               </h2>

@@ -3,7 +3,11 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import PPTPreview from '@/components/PPTPreview';
+import HtmlDeckPreview from '@/components/HtmlDeckPreview';
+import PPTModalPreview from '@/components/PPTModalPreview';
+import HtmlDeckFullscreenModal from '@/components/HtmlDeckFullscreenModal';
 import { exportToPptx } from '@/utils/exportPptx';
+import { formatChinaDateTime } from '@/utils/dateTime';
 import { pptAPI } from '@/api';
 
 interface PPTPage {
@@ -31,6 +35,9 @@ interface PPTData {
   content: {
     pages: PPTPage[];
     pageCount: number;
+    html?: string;
+    format?: string;
+    deckStyle?: string;
   };
   pageCount: number;
   createdAt: string;
@@ -46,6 +53,8 @@ const PPTDetail: React.FC = () => {
   const [isReadOnly, setIsReadOnly] = useState(searchParams.get('readonly') === 'true');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [fullscreenPreviewOpen, setFullscreenPreviewOpen] = useState(false);
+  const [htmlDeckFullscreenOpen, setHtmlDeckFullscreenOpen] = useState(false);
 
   useEffect(() => {
     setIsReadOnly(searchParams.get('readonly') === 'true');
@@ -74,7 +83,10 @@ const PPTDetail: React.FC = () => {
           title: response.title,
           content: {
             pages: response.content.pages,
-            pageCount: response.content.pageCount || 0
+            pageCount: response.content.pageCount || 0,
+            html: response.content.html,
+            format: response.content.format,
+            deckStyle: response.content.deckStyle,
           },
           pageCount: response.pageCount || response.content.pageCount || 0,
           createdAt: response.createdAt || ''
@@ -92,11 +104,6 @@ const PPTDetail: React.FC = () => {
     }
   };
 
-  const handleEditPpt = () => {
-    if (!pptData) return;
-    navigate(`/ppt/${pptData.id}/edit`);
-  };
-
   const handleExportPptx = () => {
     if (!pptData?.content?.pages) return;
     const pages = pptData.content.pages.map((p: any) => ({
@@ -112,18 +119,28 @@ const PPTDetail: React.FC = () => {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return '-';
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return dateString;
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   };
+
+  const handleExportHTML = async () => {
+    if (!pptData) return;
+    try {
+      const blob = await pptAPI.export(pptData.id, 'html');
+      downloadBlob(blob, `${pptData.title || '课件'}.html`);
+    } catch (err) {
+      alert((err as Error).message || '导出HTML失败');
+    }
+  };
+
+  const formatDate = (dateString: string) => formatChinaDateTime(dateString);
 
   if (loading) {
     return (
@@ -167,29 +184,43 @@ const PPTDetail: React.FC = () => {
           返回
         </Button>
       </div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">{pptData.title}</h1>
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-bold text-gray-800 sm:text-2xl">{pptData.title}</h1>
           <p className="text-gray-500 mt-1">共 {pptData.pageCount} 页 · {formatDate(pptData.createdAt)}</p>
         </div>
-        <div className="flex gap-3">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end sm:gap-3 lg:w-auto">
+          <Button variant="secondary" className="w-full sm:w-auto" onClick={() => {
+            if (pptData.content.html) {
+              setHtmlDeckFullscreenOpen(true);
+            } else {
+              setFullscreenPreviewOpen(true);
+            }
+          }}>
+            <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+            全屏预览
+          </Button>
           {!isReadOnly && (
-            <Button onClick={handleExportPptx}>
+            <Button className="w-full sm:w-auto" onClick={handleExportHTML}>
+              <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v12m0 0l4-4m-4 4l-4-4M5 21h14" />
+              </svg>
+              导出HTML
+            </Button>
+          )}
+          {!isReadOnly && (
+            <Button variant="secondary" className="w-full sm:w-auto" onClick={handleExportPptx}>
               <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               导出PPTX
             </Button>
           )}
-          <Button variant="secondary" onClick={handleEditPpt}>
-            <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-            编辑
-          </Button>
           <button
             onClick={() => setDeleteConfirmOpen(true)}
-            className="px-4 py-2 text-sm font-medium text-danger-600 bg-danger-50 hover:bg-danger-100 rounded-lg transition-colors flex items-center gap-2"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-danger-50 px-4 py-2 text-sm font-medium text-danger-600 transition-colors hover:bg-danger-100 sm:w-auto"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -199,13 +230,17 @@ const PPTDetail: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <PPTPreview pages={pptData.content.pages} title={pptData.title} />
+      <div className="overflow-x-auto rounded-xl bg-white p-3 shadow-sm sm:p-6">
+        {pptData.content.html ? (
+          <HtmlDeckPreview html={pptData.content.html} title={pptData.title} />
+        ) : (
+          <PPTPreview pages={pptData.content.pages} title={pptData.title} />
+        )}
       </div>
 
       {/* 删除确认弹窗 */}
       {deleteConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setDeleteConfirmOpen(false)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-modal-in">
             <div className="p-6">
@@ -257,6 +292,25 @@ const PPTDetail: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 全屏模态预览 */}
+      <PPTModalPreview
+        isOpen={fullscreenPreviewOpen}
+        onClose={() => setFullscreenPreviewOpen(false)}
+        pages={pptData.content.pages}
+        title={pptData.title}
+        enableFullscreen={true}
+      />
+
+      {/* HTML Deck 全屏预览弹窗 */}
+      {pptData.content.html && (
+        <HtmlDeckFullscreenModal
+          isOpen={htmlDeckFullscreenOpen}
+          onClose={() => setHtmlDeckFullscreenOpen(false)}
+          html={pptData.content.html}
+          title={pptData.title}
+        />
       )}
     </Layout>
   );

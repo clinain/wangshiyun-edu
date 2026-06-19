@@ -15,12 +15,17 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
     
     if (isOpen) {
       document.addEventListener('keydown', handleEscape);
+      const originalOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
+      
+      return () => {
+        document.removeEventListener('keydown', handleEscape);
+        document.body.style.overflow = originalOverflow;
+      };
     }
     
     return () => {
       document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'unset';
     };
   }, [isOpen, onClose]);
 

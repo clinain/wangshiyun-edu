@@ -18,7 +18,7 @@ interface ThemeConfig {
   fontFamily: string;
 }
 
-const THEMES: Record<string, ThemeConfig> = {
+export const THEMES: Record<string, ThemeConfig> = {
   default: {
     name: '默认蓝',
     primaryColor: '1E40AF',

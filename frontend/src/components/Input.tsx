@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface InputProps {
   label?: string;
@@ -22,6 +22,12 @@ const Input: React.FC<InputProps> = ({
   className = '',
 }) => {
   const [showPassword, setShowPassword] = useState(false);
+
+  // 当 type prop 变化时重置 showPassword 状态
+  useEffect(() => {
+    setShowPassword(false);
+  }, [type]);
+
   const inputType = type === 'password' && showPassword ? 'text' : type;
 
   return (

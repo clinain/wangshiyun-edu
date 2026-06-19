@@ -5,6 +5,8 @@
 
 const db = require('../config/database');
 
+const getCurrentTimestamp = () => new Date().toISOString();
+
 class Comment {
     /**
      * 创建评论
@@ -21,14 +23,15 @@ class Comment {
             commentType = 'comment'
         } = commentData;
 
+        const createdAt = getCurrentTimestamp();
         const sql = `
             INSERT INTO resource_comments (resource_id, portfolio_id, user_id, parent_id, content, comment_type, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, NOW())
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
         `;
 
         try {
-            const result = await db.query(sql, [resourceId, portfolioId, userId, parentId, content, commentType]);
-            return { id: result.insertId, ...commentData, createdAt: new Date() };
+            const result = await db.query(sql, [resourceId, portfolioId, userId, parentId, content, commentType, createdAt]);
+            return { id: result.insertId, ...commentData, createdAt };
         } catch (error) {
             throw error;
         }
@@ -97,15 +100,22 @@ class Comment {
                 comment.replyCount = replyCountResult[0]?.count || 0;
 
                 const recentRepliesSql = `
-                    SELECT 
+                    SELECT
                         c.id,
+                        c.user_id as userId,
+                        c.parent_id as parentId,
                         c.content,
                         c.comment_type as commentType,
+                        c.like_count as likeCount,
                         c.created_at as createdAt,
                         u.name as userName,
-                        u.avatar as userAvatar
+                        u.avatar as userAvatar,
+                        pu.name as replyToUserName
                     FROM resource_comments c
                     LEFT JOIN users u ON c.user_id = u.id
+                    LEFT JOIN users pu ON (
+                        SELECT user_id FROM resource_comments WHERE id = c.parent_id
+                    ) = pu.id
                     WHERE c.parent_id = ? AND c.status = 1
                     ORDER BY c.created_at ASC
                     LIMIT 3
@@ -153,16 +163,22 @@ class Comment {
 
         const countSql = `SELECT COUNT(*) as total FROM resource_comments WHERE parent_id = ? AND status = 1`;
         const listSql = `
-            SELECT 
+            SELECT
                 c.id,
+                c.user_id as userId,
+                c.parent_id as parentId,
                 c.content,
                 c.comment_type as commentType,
                 c.like_count as likeCount,
                 c.created_at as createdAt,
                 u.name as userName,
-                u.avatar as userAvatar
+                u.avatar as userAvatar,
+                pu.name as replyToUserName
             FROM resource_comments c
             LEFT JOIN users u ON c.user_id = u.id
+            LEFT JOIN users pu ON (
+                SELECT user_id FROM resource_comments WHERE id = c.parent_id
+            ) = pu.id
             WHERE c.parent_id = ? AND c.status = 1
             ORDER BY c.created_at ASC
             LIMIT ? OFFSET ?
@@ -173,6 +189,17 @@ class Comment {
             const total = countResult[0]?.total || 0;
 
             const replies = await db.query(listSql, [parentId, pageSize, offset]);
+
+            // 为每条回复获取子回复数量，支持多层嵌套回复
+            for (let reply of replies) {
+                const childCountSql = `
+                    SELECT COUNT(*) as childReplyCount
+                    FROM resource_comments
+                    WHERE parent_id = ? AND status = 1
+                `;
+                const childCountResult = await db.query(childCountSql, [reply.id]);
+                reply.childReplyCount = childCountResult[0]?.childReplyCount || 0;
+            }
 
             return {
                 replies,
@@ -223,11 +250,12 @@ class Comment {
         }
 
         const sql = `
-            SELECT 
-                COUNT(*) as totalComments,
-                SUM(CASE WHEN comment_type = 'question' THEN 1 ELSE 0 END) as totalQuestions,
-                SUM(CASE WHEN comment_type = 'review' THEN 1 ELSE 0 END) as totalReviews,
-                SUM(CASE WHEN comment_type = 'comment' THEN 1 ELSE 0 END) as totalDiscussions
+            SELECT
+                COUNT(CASE WHEN parent_id IS NULL THEN 1 END) as totalComments,
+                COUNT(CASE WHEN parent_id IS NOT NULL THEN 1 END) as totalReplies,
+                SUM(CASE WHEN comment_type = 'question' AND parent_id IS NULL THEN 1 ELSE 0 END) as totalQuestions,
+                SUM(CASE WHEN comment_type = 'review' AND parent_id IS NULL THEN 1 ELSE 0 END) as totalReviews,
+                SUM(CASE WHEN comment_type = 'comment' AND parent_id IS NULL THEN 1 ELSE 0 END) as totalDiscussions
             FROM resource_comments
             ${whereClause}
         `;

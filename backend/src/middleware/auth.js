@@ -4,8 +4,7 @@
  */
 
 const jwt = require('jsonwebtoken');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'wangshiyun_secret_key_2024';
+const { getJwtSecret } = require('../config/auth');
 
 /**
  * 认证中间件
@@ -37,7 +36,7 @@ const auth = (req, res, next) => {
         const token = parts[1];
 
         // 验证 Token
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, getJwtSecret());
 
         // 将用户信息附加到请求对象
         req.user = {
@@ -78,21 +77,29 @@ const auth = (req, res, next) => {
  */
 const optionalAuth = (req, res, next) => {
     try {
+        // 支持从 Authorization header 或 query 参数获取 token
+        // query 参数方式用于 iframe 加载等无法设置自定义 header 的场景
+        let token = null;
+
         const authHeader = req.headers.authorization;
+        if (authHeader) {
+            const parts = authHeader.split(' ');
+            if (parts.length === 2 && parts[0] === 'Bearer') {
+                token = parts[1];
+            }
+        }
 
-        if (!authHeader) {
+        // 如果 header 中没有 token，尝试从 query 参数获取
+        if (!token && req.query && req.query.token) {
+            token = req.query.token;
+        }
+
+        if (!token) {
             req.user = undefined;
             return next();
         }
 
-        const parts = authHeader.split(' ');
-        if (parts.length !== 2 || parts[0] !== 'Bearer') {
-            req.user = undefined;
-            return next();
-        }
-
-        const token = parts[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, getJwtSecret());
 
         req.user = {
             id: decoded.id,

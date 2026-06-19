@@ -3,7 +3,7 @@
  * 将作品集导出为ZIP文件
  */
 
-const { ZipArchive } = require('archiver');
+const JSZip = require('jszip');
 const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = require('docx');
 const PptxGenJS = require('pptxgenjs');
 const path = require('path');
@@ -13,6 +13,28 @@ const Lesson = require('../models/Lesson');
 const PPTRecord = require('../models/PPTRecord');
 
 class ExportService {
+    static fieldLabels = {
+        introduction: '课堂导入',
+        mainContent: '新课讲授',
+        newTeaching: '新课讲授',
+        practice: '巩固练习',
+        summary: '课堂小结',
+        conclusion: '课堂小结',
+        homework: '作业安排',
+        assignments: '作业安排',
+        stages: '教学环节',
+        teacherActivities: '教师活动',
+        studentActivities: '学生活动',
+        teachingPoints: '教学要点',
+        activities: '活动',
+        content: '内容',
+        description: '说明',
+        stageName: '环节',
+        name: '名称',
+        duration: '时间',
+        timeAllocation: '时间',
+    };
+
     static getExportDir() {
         const exportDir = path.join(__dirname, '../../exports');
         if (!fs.existsSync(exportDir)) {
@@ -51,13 +73,17 @@ class ExportService {
                     const lesson = await Lesson.findById(lessonId);
                     if (lesson) {
                         const docxBuffer = await this.generateLessonDocx(lesson);
+                        const safeTitle = (lesson.title || `教案_${lessonId}`).replace(/[\/\\?%*:|"<>]/g, '_');
                         archiveData.push({
-                            name: `lessons/${lesson.title.replace(/[\/\\?%*:|"<>]/g, '_')}.docx`,
+                            name: `lessons/${safeTitle}.docx`,
                             content: docxBuffer
                         });
+                        console.log(`  ✅ 教案: ${lesson.title} (${docxBuffer.length} bytes)`);
+                    } else {
+                        console.warn(`  ⚠️ 教案 ${lessonId} 已不存在，已跳过`);
                     }
                 } catch (err) {
-                    console.error(`导出教案 ${lessonId} 失败:`, err.message);
+                    console.error(`  ❌ 导出教案 ${lessonId} 失败:`, err.message);
                 }
             }
         }
@@ -78,14 +104,18 @@ class ExportService {
                         } catch (e) {
                             content = { pages: [] };
                         }
+                        const safeTitle = (ppt.title || `PPT_${pptId}`).replace(/[\/\\?%*:|"<>]/g, '_');
                         const pptxBuffer = await this.generatePptx(ppt.title, content);
                         archiveData.push({
-                            name: `ppt/${ppt.title.replace(/[\/\\?%*:|"<>]/g, '_')}.pptx`,
+                            name: `ppt/${safeTitle}.pptx`,
                             content: pptxBuffer
                         });
+                        console.log(`  ✅ PPT: ${ppt.title} (${pptxBuffer.length} bytes)`);
+                    } else {
+                        console.warn(`  ⚠️ PPT ${pptId} 已不存在，已跳过`);
                     }
                 } catch (err) {
-                    console.error(`导出PPT ${pptId} 失败:`, err.message);
+                    console.error(`  ❌ 导出PPT ${pptId} 失败:`, err.message);
                 }
             }
         }
@@ -95,29 +125,22 @@ class ExportService {
             content: this.generateReadme(portfolio)
         });
 
-        return new Promise((resolve, reject) => {
-            const output = fs.createWriteStream(zipPath);
-            const archive = new ZipArchive('zip', {
-                zlib: { level: 9 }
-            });
+        // 使用 jszip 构建 ZIP 文件
+        const zip = new JSZip();
 
-            output.on('close', () => {
-                console.log(`作品集导出成功: ${zipFilename} (${archive.pointer()} bytes)`);
-                resolve(zipPath);
-            });
-
-            archive.on('error', (err) => {
-                reject(err);
-            });
-
-            archive.pipe(output);
-
-            archiveData.forEach(item => {
-                archive.append(item.content, { name: item.name });
-            });
-
-            archive.finalize();
+        archiveData.forEach(item => {
+            zip.file(item.name, item.content);
         });
+
+        const zipBuffer = await zip.generateAsync({
+            type: 'nodebuffer',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 9 }
+        });
+
+        fs.writeFileSync(zipPath, zipBuffer);
+        console.log(`作品集导出成功: ${zipFilename} (${zipBuffer.length} bytes)`);
+        return zipPath;
     }
 
     static async generateLessonDocx(lesson) {
@@ -147,53 +170,37 @@ class ExportService {
         // 分隔线
         children.push(new Paragraph({ children: [new TextRun({ text: '─'.repeat(50), color: 'CCCCCC', size: 18 })], spacing: { after: 200 } }));
 
+        const addTextLines = (lines, options = {}) => {
+            lines
+                .map(line => String(line).trim())
+                .filter(Boolean)
+                .forEach(line => {
+                    const isSection = line.startsWith('【') && line.endsWith('】');
+                    children.push(new Paragraph({
+                        children: [new TextRun({ text: `  ${line}`, bold: isSection || options.bold, size: 22 })],
+                        spacing: { before: isSection ? 150 : 40, after: isSection ? 80 : 40 }
+                    }));
+                });
+        };
+
         // 教学目标
-        const goals = this.parseJSON(lesson.teachingGoals, []);
+        const goals = this.formatTeachingGoalsLines(lesson.teachingGoals);
         if (goals.length > 0) {
             children.push(new Paragraph({ children: [new TextRun({ text: '一、教学目标', bold: true, size: 26 })], spacing: { before: 300, after: 150 } }));
-            goals.forEach((goal, i) => {
-                children.push(new Paragraph({ children: [new TextRun({ text: `  ${i + 1}. ${goal}`, size: 22 })], spacing: { before: 80, after: 80 } }));
-            });
+            addTextLines(goals);
         }
 
         // 教学重难点
-        const points = this.parseJSON(lesson.keyPoints, []);
+        const points = this.formatContentLines(lesson.keyPoints);
         if (points.length > 0) {
             children.push(new Paragraph({ children: [new TextRun({ text: '二、教学重难点', bold: true, size: 26 })], spacing: { before: 300, after: 150 } }));
-            points.forEach((point, i) => {
-                children.push(new Paragraph({ children: [new TextRun({ text: `  ${i + 1}. ${point}`, size: 22 })], spacing: { before: 80, after: 80 } }));
-            });
+            addTextLines(points);
         }
 
         // 教学过程
         if (lesson.teachingProcess) {
             children.push(new Paragraph({ children: [new TextRun({ text: '三、教学过程', bold: true, size: 26 })], spacing: { before: 300, after: 150 } }));
-            
-            let processText = '';
-            if (typeof lesson.teachingProcess === 'string') {
-                processText = lesson.teachingProcess;
-            } else if (typeof lesson.teachingProcess === 'object') {
-                // 尝试解析已知结构
-                const process = lesson.teachingProcess;
-                if (process.introduction || process.mainContent || process.practice || process.summary) {
-                    if (process.introduction) processText += `【课堂导入】\n${process.introduction}\n\n`;
-                    if (process.mainContent) processText += `【新课讲授】\n${process.mainContent}\n\n`;
-                    if (process.practice) processText += `【巩固练习】\n${process.practice}\n\n`;
-                    if (process.summary) processText += `【课堂总结】\n${process.summary}\n\n`;
-                } else {
-                    // 未知结构，直接输出格式化 JSON
-                    processText = JSON.stringify(process, null, 2);
-                }
-            }
-            
-            const processLines = processText.split('\n').filter(l => l.trim());
-            processLines.forEach(line => {
-                const isSection = line.startsWith('【') && line.endsWith('】');
-                children.push(new Paragraph({
-                    children: [new TextRun({ text: `  ${line}`, bold: isSection, size: isSection ? 22 : 22 })],
-                    spacing: { before: isSection ? 150 : 40, after: isSection ? 80 : 40 }
-                }));
-            });
+            addTextLines(this.formatTeachingProcessLines(lesson.teachingProcess));
         }
 
         // 课后作业
@@ -479,6 +486,207 @@ class ExportService {
             }
         }
         return defaultValue;
+    }
+
+    static parseContent(value) {
+        if (!value) return value;
+        if (typeof value !== 'string') return value;
+        const trimmed = value.trim();
+        if (!trimmed) return '';
+        const candidates = [
+            trimmed,
+            `{"mainContent":{"stages":[{${trimmed}`,
+            `{"stages":[{${trimmed}`,
+            `{${trimmed}}`,
+            `[{${trimmed}}]`,
+        ];
+        for (const candidate of candidates) {
+            try {
+                return JSON.parse(candidate);
+            } catch {
+                // 继续尝试容错包装
+            }
+        }
+        return value;
+    }
+
+    static parseTeachingGoals(value) {
+        if (!value) return { version: 2, dimensions: [] };
+
+        const parsedValue = this.parseContent(value);
+        if (parsedValue !== value) {
+            return this.parseTeachingGoals(parsedValue);
+        }
+
+        if (typeof value === 'string') {
+            return {
+                version: 2,
+                dimensions: [
+                    {
+                        id: 'general',
+                        name: '教学目标',
+                        goals: value.split('\n').map(line => line.trim()).filter(Boolean),
+                    },
+                ],
+            };
+        }
+
+        if (Array.isArray(value)) {
+            const dimensionMap = {};
+            const generalGoals = [];
+
+            value.forEach(goal => {
+                const str = typeof goal === 'string' ? goal : String(goal);
+                const match = str.match(/^([^：:]+)[：:](.+)/);
+                if (match) {
+                    const dimName = match[1].trim();
+                    const goalContent = match[2].trim();
+                    if (!dimensionMap[dimName]) {
+                        dimensionMap[dimName] = [];
+                    }
+                    dimensionMap[dimName].push(goalContent);
+                } else {
+                    generalGoals.push(str);
+                }
+            });
+
+            const dimensions = Object.entries(dimensionMap).map(([name, goals]) => ({
+                id: name.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '_'),
+                name,
+                goals,
+            }));
+
+            if (generalGoals.length > 0) {
+                dimensions.push({
+                    id: 'general',
+                    name: dimensions.length > 0 ? '综合目标' : '教学目标',
+                    goals: generalGoals,
+                });
+            }
+
+            return { version: 2, dimensions };
+        }
+
+        if (typeof value === 'object') {
+            if (Array.isArray(value.dimensions)) {
+                return value;
+            }
+
+            const mapping = {
+                knowledge: '知识与技能',
+                ability: '过程与方法',
+                emotion: '情感态度与价值观',
+            };
+
+            const dimensions = Object.entries(mapping)
+                .filter(([key]) => Array.isArray(value[key]) && value[key].length > 0)
+                .map(([key, name]) => ({
+                    id: key,
+                    name,
+                    goals: value[key],
+                }));
+
+            if (dimensions.length > 0) {
+                return { version: 2, dimensions };
+            }
+        }
+
+        return { version: 2, dimensions: [] };
+    }
+
+    static formatTeachingGoalsLines(value) {
+        const parsed = this.parseTeachingGoals(value);
+        const lines = [];
+
+        parsed.dimensions.forEach(dim => {
+            if (dim.name) {
+                lines.push(dim.name);
+            }
+            dim.goals.forEach((goal, index) => {
+                lines.push(`${index + 1}. ${goal}`);
+            });
+        });
+
+        if (lines.length > 0) {
+            return lines;
+        }
+
+        return this.valueToLines(this.parseContent(value));
+    }
+
+    static formatContentLines(value) {
+        return this.valueToLines(this.parseContent(value));
+    }
+
+    static valueToLines(value) {
+        if (!value) return [];
+        if (typeof value === 'string') {
+            return value
+                .split('\n')
+                .map(line => line.trim())
+                .filter(Boolean);
+        }
+        if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];
+        if (Array.isArray(value)) {
+            return value.flatMap((item, index) => {
+                const lines = this.valueToLines(this.parseContent(item));
+                if (typeof item === 'object' && item !== null) return lines;
+                return lines.map(line => `${index + 1}. ${line}`);
+            });
+        }
+        if (typeof value === 'object') {
+            const lines = [];
+            const title = value.stageName || value.name || value.title;
+            const duration = value.duration || value.timeAllocation;
+            if (title || duration) {
+                lines.push(`${title ? String(title) : '教学环节'}${duration ? `（${duration}）` : ''}`);
+            }
+
+            Object.entries(value).forEach(([key, childValue]) => {
+                if (['stageName', 'name', 'title', 'duration', 'timeAllocation'].includes(key)) return;
+                const childLines = this.valueToLines(this.parseContent(childValue));
+                if (childLines.length === 0) return;
+                const label = this.fieldLabels[key] || '';
+                if (label) {
+                    lines.push(`${label}：`);
+                    lines.push(...childLines.map(line => `  ${line}`));
+                } else {
+                    lines.push(...childLines);
+                }
+            });
+            return lines;
+        }
+        return [];
+    }
+
+    static formatTeachingProcessLines(value) {
+        const parsed = this.parseContent(value);
+        if (Array.isArray(parsed)) {
+            return this.valueToLines({ stages: parsed });
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return this.valueToLines(parsed);
+        }
+
+        const parts = [];
+        const sectionKeys = ['introduction', 'newTeaching', 'mainContent', 'stages', 'practice', 'summary', 'conclusion'];
+        sectionKeys.forEach(key => {
+            if (!parsed[key]) return;
+            const label = this.fieldLabels[key] || '教学内容';
+            const lines = this.valueToLines(this.parseContent(parsed[key]));
+            if (lines.length > 0) {
+                parts.push(`【${label}】`);
+                parts.push(...lines);
+            }
+        });
+
+        if (parts.length > 0) return parts;
+
+        return Object.entries(parsed).flatMap(([key, childValue]) => {
+            const lines = this.valueToLines(this.parseContent(childValue));
+            if (lines.length === 0) return [];
+            return [`【${this.fieldLabels[key] || '教学内容'}】`, ...lines];
+        });
     }
 
     static cleanExpiredFiles(maxAge = 24 * 60 * 60 * 1000) {

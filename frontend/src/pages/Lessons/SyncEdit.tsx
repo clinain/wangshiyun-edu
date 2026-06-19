@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import Layout from '@/components/Layout/Layout';
 import Button from '@/components/Button';
 import PPTPreview from '@/components/PPTPreview';
 import PPTModalPreview from '@/components/PPTModalPreview';
+import GeneratingProgressModal from '@/components/GeneratingProgressModal';
 import { lessonAPI, pptAPI } from '@/api';
 import type { Lesson, PPTRecord, PPTPage } from '@/types';
+import { teachingGoalsToText, textToTeachingGoals } from '@/utils/teachingGoalsHelper';
 
 const primarySubjects = ['语文', '数学', '英语', '道德与法治', '科学', '信息科技', '音乐', '美术', '体育与健康', '劳动', '书法', '综合实践活动', '心理健康'];
 const middleSubjects = ['语文', '数学', '英语', '道德与法治', '历史', '地理', '物理', '化学', '生物学', '信息技术', '音乐', '美术', '体育与健康', '劳动', '心理健康', '综合实践活动'];
@@ -19,12 +21,17 @@ const SyncEdit: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [lesson, setLesson] = useState<Lesson | null>(null);
+  const [teachingGoalsText, setTeachingGoalsText] = useState('');
   const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncingStage, setSyncingStage] = useState('');
   const [error, setError] = useState('');
 
   const [pptRecord, setPptRecord] = useState<PPTRecord | null>(null);
@@ -63,12 +70,19 @@ const SyncEdit: React.FC = () => {
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const hasChangesRef = useRef(false);
+  const latestLessonRef = useRef<Lesson | null>(null);
+  const teachingGoalsTextRef = useRef('');
 
   const lessonIdFromQuery = searchParams.get('lessonId');
 
   useEffect(() => {
     const init = async () => {
       setLoading(true);
+      setLesson(null);
+      setTeachingGoalsText('');
+      setPptRecord(null);
+      setPptPages([]);
+      setError('');
       try {
         if (id && id !== 'sync') {
           await fetchLessonData(parseInt(id));
@@ -85,10 +99,11 @@ const SyncEdit: React.FC = () => {
       }
     };
     init();
-  }, [id, lessonIdFromQuery]);
+  }, [id, lessonIdFromQuery, location.pathname]);
 
   const fetchLessonsList = async () => {
     try {
+      setCurrentPage(1);
       const result = await lessonAPI.list({ pageSize: 100 });
       setLessons(result.lessons || []);
     } catch (err) {
@@ -98,7 +113,10 @@ const SyncEdit: React.FC = () => {
 
   const fetchLessonData = async (lessonId: number) => {
     const lessonData = await lessonAPI.detail(lessonId);
+    latestLessonRef.current = lessonData;
     setLesson(lessonData);
+    teachingGoalsTextRef.current = teachingGoalsToText(lessonData.teachingGoals);
+    setTeachingGoalsText(teachingGoalsToText(lessonData.teachingGoals));
 
     // 根据年级自动检测学段
     if (lessonData.grade) {
@@ -116,8 +134,8 @@ const SyncEdit: React.FC = () => {
             setPptPages(pptDetail.content.pages);
           }
         }
-      } catch (e) {
-        console.log('未找到关联的PPT');
+      } catch (_e) {
+        // 未找到关联的PPT，忽略
       }
     }
   };
@@ -129,7 +147,17 @@ const SyncEdit: React.FC = () => {
   const handleFieldChange = useCallback((field: string, value: string) => {
     if (!lesson) return;
 
-    setLesson(prev => prev ? { ...prev, [field]: value } : null);
+    if (field === 'teachingGoals') {
+      teachingGoalsTextRef.current = value;
+      setTeachingGoalsText(value);
+    } else {
+      setLesson(prev => {
+        if (!prev) return null;
+        const next = { ...prev, [field]: value };
+        latestLessonRef.current = next;
+        return next;
+      });
+    }
     hasChangesRef.current = true;
 
     if (debounceTimerRef.current) {
@@ -138,42 +166,37 @@ const SyncEdit: React.FC = () => {
 
     debounceTimerRef.current = setTimeout(() => {
       if (hasChangesRef.current) {
-        console.log('防抖触发，自动保存...');
         handleSave(true);
       }
     }, 3000);
   }, [lesson]);
 
   const handleSave = async (isAutoSave = false) => {
-    if (!lesson) return;
+    const currentLesson = latestLessonRef.current || lesson;
+    if (!currentLesson) return;
 
     setSaving(true);
     setError('');
 
     try {
       const data: Record<string, unknown> = {
-        title: lesson.title,
-        subject: lesson.subject,
-        grade: lesson.grade,
-        teachingGoals: typeof lesson.teachingGoals === 'string'
-          ? lesson.teachingGoals
-          : JSON.stringify(lesson.teachingGoals),
-        keyPoints: typeof lesson.keyPoints === 'string'
-          ? lesson.keyPoints
-          : JSON.stringify(lesson.keyPoints),
-        teachingProcess: typeof lesson.teachingProcess === 'string'
-          ? lesson.teachingProcess
-          : JSON.stringify(lesson.teachingProcess),
-        assignments: lesson.assignments || '',
-        summary: lesson.summary || '',
+        title: currentLesson.title,
+        subject: currentLesson.subject,
+        grade: currentLesson.grade,
+        teachingGoals: JSON.stringify(textToTeachingGoals(teachingGoalsTextRef.current)),
+        keyPoints: typeof currentLesson.keyPoints === 'string'
+          ? currentLesson.keyPoints
+          : JSON.stringify(currentLesson.keyPoints),
+        teachingProcess: typeof currentLesson.teachingProcess === 'string'
+          ? currentLesson.teachingProcess
+          : JSON.stringify(currentLesson.teachingProcess),
+        assignments: currentLesson.assignments || '',
+        summary: currentLesson.summary || '',
       };
 
-      await lessonAPI.update(lesson.id, data);
+      await lessonAPI.update(currentLesson.id, data);
       hasChangesRef.current = false;
 
-      if (!isAutoSave) {
-        console.log('教案已保存');
-      }
     } catch (err) {
       console.error('保存失败:', err);
       if (!isAutoSave) {
@@ -188,28 +211,78 @@ const SyncEdit: React.FC = () => {
     if (!lesson) return;
 
     setSyncing(true);
+    setSyncingStage('正在保存教案内容...');
     setError('');
 
     try {
       await handleSave(true);
 
+      setSyncingStage('正在分析教案结构...');
+      
+      // 模拟阶段更新
+      const stageTimer1 = setTimeout(() => setSyncingStage('正在同步教案内容到PPT...'), 3000);
+      const stageTimer2 = setTimeout(() => setSyncingStage('正在设计PPT页面布局...'), 8000);
+      const stageTimer3 = setTimeout(() => setSyncingStage('正在生成精美课件...'), 15000);
+      const stageTimer4 = setTimeout(() => setSyncingStage('即将完成，请耐心等待...'), 25000);
+      
       const pptData = await pptAPI.sync(lesson.id);
+      
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+      clearTimeout(stageTimer3);
+      clearTimeout(stageTimer4);
+      
       setPptRecord(pptData);
 
-      if (pptData.content?.pages) {
-        setPptPages(pptData.content.pages);
+      // 简化验证逻辑：只要content存在就尝试获取pages
+      if (pptData.content) {
+        const pages = pptData.content.pages || [];
+        
+        if (pages.length > 0) {
+          setPptPages(pages);
+        } else {
+          setError('生成的PPT页数为0');
+        }
+      } else {
+        setError('PPT内容不存在');
       }
     } catch (err) {
       console.error('同步生成失败:', err);
       setError((err as Error).message || '同步生成失败');
     } finally {
       setSyncing(false);
+      setSyncingStage('');
     }
   };
 
   const handleSaveAndSync = async () => {
     await handleSave(false);
     await handleSyncGenerate();
+  };
+
+  const handleSaveAll = async () => {
+    if (!lesson) return;
+
+    setSaving(true);
+    setError('');
+
+    try {
+      // 保存教案
+      await handleSave(false);
+
+      // 如果有PPT记录，保存PPT
+      if (pptRecord && pptRecord.id) {
+        const response = await pptAPI.update(pptRecord.id, { title: pptRecord.title });
+        setPptRecord(response);
+      }
+
+      alert('教案和PPT已保存成功！');
+    } catch (err) {
+      console.error('保存失败:', err);
+      setError((err as Error).message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handlePreview = () => {
@@ -232,7 +305,7 @@ const SyncEdit: React.FC = () => {
         title="同步设计"
         breadcrumbs={[
           { label: '首页', path: '/' },
-          { label: '我的备课', path: '/lessons' },
+          { label: '我的备课', path: '/teaching-preparation' },
           { label: '同步设计' }
         ]}
       >
@@ -243,17 +316,30 @@ const SyncEdit: React.FC = () => {
     );
   }
 
+  // 分页计算
+  const totalPages = Math.max(1, Math.ceil(lessons.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedLessons = lessons.slice((safeCurrentPage - 1) * PAGE_SIZE, safeCurrentPage * PAGE_SIZE);
+
   if (!lesson) {
     return (
-      <Layout 
-        title="同步设计" 
+      <Layout
+        title="同步设计"
         subtitle="选择教案"
         breadcrumbs={[
           { label: '首页', path: '/' },
-          { label: '我的备课', path: '/lessons' },
+          { label: '我的备课', path: '/teaching-preparation' },
           { label: '同步设计' }
         ]}
       >
+        <div className="mb-4">
+          <Button variant="secondary" onClick={() => navigate('/teaching-preparation', { replace: true })}>
+            <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            返回
+          </Button>
+        </div>
         <div className="max-w-4xl mx-auto">
           <div className="bg-white rounded-xl shadow-sm p-6">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">选择要编辑的教案</h2>
@@ -264,29 +350,93 @@ const SyncEdit: React.FC = () => {
             )}
 
             {lessons.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {lessons.map(l => (
-                  <div
-                    key={l.id}
-                    onClick={() => handleSelectLesson(l)}
-                    className="p-4 border border-gray-200 rounded-lg hover:border-primary-500 hover:bg-primary-50 cursor-pointer transition-colors"
-                  >
-                    <h3 className="font-medium text-gray-800 mb-2">{l.title}</h3>
-                    <div className="flex gap-2 text-sm text-gray-500">
-                      <span>{l.subject}</span>
-                      <span>·</span>
-                      <span>{l.grade}</span>
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {paginatedLessons.map(l => (
+                    <div
+                      key={l.id}
+                      onClick={() => handleSelectLesson(l)}
+                      className="p-4 border border-gray-200 rounded-lg hover:border-primary-500 hover:bg-primary-50 cursor-pointer transition-colors"
+                    >
+                      <h3 className="font-medium text-gray-800 mb-2">{l.title}</h3>
+                      <div className="flex gap-2 text-sm text-gray-500">
+                        <span>{l.subject}</span>
+                        <span>·</span>
+                        <span>{l.grade}</span>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-2">
+                        创建于 {new Date(l.createdAt).toLocaleDateString()}
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-400 mt-2">
-                      创建于 {new Date(l.createdAt).toLocaleDateString()}
-                    </p>
+                  ))}
+                </div>
+
+                {/* 分页控件 - 始终显示 */}
+                <div className="mt-6 flex items-center justify-between">
+                  <div className="text-sm text-gray-500">
+                    共 {lessons.length} 个教案，第 {safeCurrentPage}/{totalPages} 页
                   </div>
-                ))}
-              </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={safeCurrentPage === 1}
+                      className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      首页
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={safeCurrentPage === 1}
+                      className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      上一页
+                    </button>
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum: number;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (safeCurrentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (safeCurrentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = safeCurrentPage - 2 + i;
+                      }
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                            safeCurrentPage === pageNum
+                              ? 'bg-primary-600 text-white border border-primary-600'
+                              : 'text-gray-600 bg-white border border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={safeCurrentPage === totalPages}
+                      className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      下一页
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={safeCurrentPage === totalPages}
+                      className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      末页
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="text-center py-12 text-gray-500">
                 <p>暂无教案，请先创建教案</p>
-                <Button onClick={() => navigate('/lessons/create')} className="mt-4">
+                <Button onClick={() => navigate('/teaching-preparation')} className="mt-4">
                   创建教案
                 </Button>
               </div>
@@ -303,10 +453,22 @@ const SyncEdit: React.FC = () => {
       subtitle={lesson.title}
       breadcrumbs={[
         { label: '首页', path: '/' },
-        { label: '我的备课', path: '/lessons' },
+        { label: '我的备课', path: '/teaching-preparation' },
         { label: '同步设计' }
       ]}
     >
+      <GeneratingProgressModal
+        visible={syncing}
+        title="AI智能同步设计中"
+        stage={syncingStage}
+        estimatedTime={240}
+        tips={[
+          'AI正在分析教案结构，请耐心等待...',
+          '正在同步教案内容到PPT...',
+          '正在设计精美的页面布局...',
+          '同步设计即将完成，请勿关闭页面...',
+        ]}
+      />
       <div className="mb-4">
         <Button variant="secondary" onClick={() => navigate('/lessons/sync')}>
           <svg className="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -322,10 +484,26 @@ const SyncEdit: React.FC = () => {
             <div className="flex gap-2">
               <Button
                 size="sm"
+                onClick={handleSave}
+                loading={saving}
+                variant="secondary"
+              >
+                保存教案
+              </Button>
+              <Button
+                size="sm"
                 onClick={handleSaveAndSync}
                 loading={saving || syncing}
               >
                 保存并同步
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSaveAll}
+                loading={saving}
+                variant="outline"
+              >
+                保存全部
               </Button>
             </div>
           </div>
@@ -405,13 +583,11 @@ const SyncEdit: React.FC = () => {
                 教学目标
               </label>
               <textarea
-                value={Array.isArray(lesson.teachingGoals) 
-                  ? lesson.teachingGoals.join('\n') 
-                  : (typeof lesson.teachingGoals === 'string' ? lesson.teachingGoals : '')}
+                value={teachingGoalsText}
                 onChange={(e) => handleFieldChange('teachingGoals', e.target.value)}
                 rows={4}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                placeholder="请输入教学目标（每行一条）"
+                placeholder="请输入教学目标（每行一条，格式：维度名称：目标内容）"
               />
             </div>
 
@@ -473,22 +649,42 @@ const SyncEdit: React.FC = () => {
           </div>
         </div>
 
-        <div className="w-1/2 bg-white rounded-xl shadow-sm p-6 flex flex-col">
+        <div className="w-1/2 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm p-6 flex flex-col border border-gray-200">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-800">PPT预览</h2>
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              <h2 className="text-lg font-semibold text-gray-800">PPT预览</h2>
+              {pptPages.length > 0 && (
+                <span className="text-sm text-gray-500 bg-white px-2 py-1 rounded-full">
+                  {pptPages.length} 页
+                </span>
+              )}
+            </div>
+            {pptPages.length > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handlePreview}
+              >
+                全屏预览
+              </Button>
+            )}
           </div>
 
-          <div className="flex-1 bg-gray-100 rounded-lg p-4 overflow-y-auto">
+          <div className="flex-1 bg-white rounded-lg p-4 overflow-y-auto border border-gray-200 shadow-inner">
             {pptPages.length > 0 ? (
               <PPTPreview pages={pptPages} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-gray-400">
-                <svg className="h-16 w-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="h-20 w-20 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <p className="text-center">
-                  保存并同步后<br />
-                  教案内容将转换为PPT
+                <p className="text-center text-gray-500">
+                  <span className="font-medium text-gray-600">点击"保存并同步"</span><br />
+                  AI将根据教案内容生成PPT
                 </p>
               </div>
             )}

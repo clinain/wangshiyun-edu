@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 interface PPTPage {
   type: string;
@@ -27,6 +27,7 @@ interface PPTModalPreviewProps {
   isOpen: boolean;
   onClose: () => void;
   initialPage?: number;
+  enableFullscreen?: boolean;
 }
 
 const PPTModalPreview: React.FC<PPTModalPreviewProps> = ({
@@ -34,11 +35,38 @@ const PPTModalPreview: React.FC<PPTModalPreviewProps> = ({
   title,
   isOpen,
   onClose,
-  initialPage = 0
+  initialPage = 0,
+  enableFullscreen = false
 }) => {
   const [currentPage, setCurrentPage] = useState(initialPage);
   const [scale, setScale] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const toggleFullscreen = async () => {
+    if (!containerRef.current) return;
+    
+    if (!document.fullscreenElement) {
+      try {
+        await containerRef.current.requestFullscreen();
+        setIsFullscreen(true);
+      } catch (err) {
+        console.warn('无法进入全屏模式:', err);
+      }
+    } else {
+      await document.exitFullscreen();
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -52,15 +80,23 @@ const PPTModalPreview: React.FC<PPTModalPreviewProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          onClose();
+        }
+        return;
+      }
       if (e.key === 'ArrowLeft') goToPrev();
       if (e.key === 'ArrowRight') goToNext();
       if (e.key === '+' || e.key === '=') zoomIn();
       if (e.key === '-') zoomOut();
+      if ((e.key === 'f' || e.key === 'F') && enableFullscreen) toggleFullscreen();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, currentPage]);
+  }, [isOpen, onClose, currentPage, enableFullscreen]);
 
   const goToPrev = useCallback(() => {
     setCurrentPage(prev => Math.max(0, prev - 1));
@@ -161,10 +197,10 @@ const PPTModalPreview: React.FC<PPTModalPreviewProps> = ({
   const page = pages[currentPage];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full h-full max-w-6xl mx-4 my-8 bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div ref={containerRef} className={`relative w-full h-full ${isFullscreen ? 'max-w-none mx-0 my-0 rounded-none' : 'max-w-6xl mx-4 my-8 rounded-2xl'} bg-white shadow-2xl flex flex-col overflow-hidden`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
           <div className="flex items-center gap-4">
             <h2 className="text-xl font-semibold text-gray-800">{title}</h2>
@@ -200,6 +236,23 @@ const PPTModalPreview: React.FC<PPTModalPreviewProps> = ({
               </svg>
             </button>
             <div className="w-px h-6 bg-gray-300 mx-2" />
+            {enableFullscreen && (
+              <button
+                onClick={toggleFullscreen}
+                className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                title={isFullscreen ? '退出全屏 (F)' : '全屏预览 (F)'}
+              >
+                {isFullscreen ? (
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
+                  </svg>
+                ) : (
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                  </svg>
+                )}
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
@@ -285,7 +338,7 @@ const PPTModalPreview: React.FC<PPTModalPreviewProps> = ({
         </div>
 
         <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-3 py-1 rounded-full opacity-60">
-          使用 ← → 键翻页，+/- 键缩放，Esc 键关闭
+          使用 ← → 键翻页，+/- 键缩放{enableFullscreen ? '，F 全屏' : ''}，Esc 键关闭
         </div>
       </div>
     </div>

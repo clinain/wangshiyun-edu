@@ -3,7 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-d
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import Login from '@/pages/Login';
 import Dashboard from '@/pages/Dashboard';
-import LessonList from '@/pages/Lessons/Index';
+import TeachingPreparation from './pages/TeachingPreparation';
 import LessonCreate from '@/pages/Lessons/Create';
 
 const LessonCreateWrapper: React.FC = () => {
@@ -19,9 +19,9 @@ import Portfolios from '@/pages/Portfolios';
 import PortfolioView from '@/pages/PortfolioView';
 import PPT from '@/pages/PPT';
 import PPTDetail from '@/pages/PPTDetail';
-import PPTEdit from '@/pages/PPTEdit';
 import Profile from '@/pages/Profile';
 import KnowledgeBase from '@/pages/KnowledgeBase';
+import UserManagement from '@/pages/Admin/UserManagement';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAuth();
@@ -49,6 +49,28 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }
 
   return user ? <Navigate to="/dashboard" /> : <>{children}</>;
+};
+
+const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-500"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" />;
+  }
+
+  if (user.role !== 'admin') {
+    return <Navigate to="/dashboard" />;
+  }
+
+  return <>{children}</>;
 };
 
 const App: React.FC = () => {
@@ -80,14 +102,7 @@ const App: React.FC = () => {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/lessons"
-            element={
-              <ProtectedRoute>
-                <LessonList />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/teaching-preparation" element={<ProtectedRoute><TeachingPreparation /></ProtectedRoute>} />
           <Route
             path="/lessons/create"
             element={
@@ -155,9 +170,7 @@ const App: React.FC = () => {
           <Route
             path="/portfolios/:id/view"
             element={
-              <ProtectedRoute>
-                <PortfolioView />
-              </ProtectedRoute>
+              <PortfolioView />
             }
           />
           <Route
@@ -177,14 +190,6 @@ const App: React.FC = () => {
             }
           />
           <Route
-            path="/ppt/:id/edit"
-            element={
-              <ProtectedRoute>
-                <PPTEdit />
-              </ProtectedRoute>
-            }
-          />
-          <Route
             path="/knowledge-base"
             element={
               <ProtectedRoute>
@@ -200,6 +205,17 @@ const App: React.FC = () => {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute>
+                <AdminRoute>
+                  <UserManagement />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>
       </HashRouter>

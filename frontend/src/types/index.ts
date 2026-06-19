@@ -10,13 +10,28 @@ export interface User {
   createdAt?: string;
 }
 
+/**
+ * 核心素养维度教学目标
+ */
+export interface CoreCompetencyDimension {
+  id: string;
+  name: string;
+  description?: string;
+  goals: string[];
+}
+
+export interface TeachingGoalsData {
+  version: number;
+  dimensions: CoreCompetencyDimension[];
+}
+
 export interface Lesson {
   id: number;
   userId: number;
   title: string;
   subject: string;
   grade: string;
-  teachingGoals: string | string[];
+  teachingGoals: TeachingGoalsData | string | string[];
   keyPoints: string | string[];
   teachingProcess: string | Record<string, unknown>;
   assignments?: string;
@@ -59,6 +74,10 @@ export interface Portfolio {
   userId: number;
   name: string;
   description?: string;
+  subject?: string;
+  stage?: string;
+  grade?: string;
+  category?: string;
   lessonIds?: number[];
   pptIds?: number[];
   lesson_ids?: string;
@@ -117,6 +136,9 @@ export interface PPTRecord {
     subject?: string;
     grade?: string;
     templateStyle?: string;
+    format?: string;
+    deckStyle?: string;
+    html?: string;
     pages: PPTPage[];
     pageCount: number;
   };
@@ -148,6 +170,9 @@ export interface PPTContent {
   subject?: string;
   grade?: string;
   templateStyle?: string;
+  format?: string;
+  deckStyle?: string;
+  html?: string;
   pages: PPTPage[];
   pageCount: number;
   createdAt?: string;
@@ -174,12 +199,23 @@ export interface ApiResponse<T = unknown> {
 
 export interface LoginRequest {
   login: string;
-  password: string;
+  password?: string;
+  verificationCode?: string;
 }
 
 export interface RegisterRequest {
-  phone: string;
+  email: string;
   password: string;
+  verificationCode: string;
+}
+
+export interface SendVerificationCodeRequest {
+  email: string;
+}
+
+export interface SendVerificationCodeResponse {
+  email: string;
+  code?: string;
 }
 
 export interface CreateLessonRequest {
@@ -203,7 +239,80 @@ export interface GenerateLessonRequest {
 export interface CreatePortfolioRequest {
   name: string;
   description?: string;
+  subject?: string;
+  stage?: string;
+  grade?: string;
+  category?: string;
   lessonIds: number[];
   pptIds?: number[];
   isPublic?: boolean;
+}
+
+// ============ 管理员相关类型 ============
+
+export interface AdminStats {
+  totalUsers: number;
+  studentCount: number;
+  teacherCount: number;
+  adminCount: number;
+  activeUsers: number;
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  role: 'student' | 'teacher' | 'admin';
+  school?: string;
+  avatar?: string;
+  status: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminPagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AdminUserListResponse {
+  users: AdminUser[];
+  pagination: AdminPagination;
+}
+
+export interface AdminOperationLog {
+  id: number;
+  admin_id: number;
+  admin_name: string;
+  target_user_id: number;
+  target_user_name: string;
+  action: string;
+  detail: string;
+  ip_address: string;
+  created_at: string;
+}
+
+export interface AdminLogsResponse {
+  logs: AdminOperationLog[];
+  pagination: AdminPagination;
+}
+
+export interface Notification {
+  id: number;
+  userId: number;
+  senderId: number | null;
+  type: 'comment' | 'favorite' | 'system';
+  title: string;
+  content: string | null;
+  resourceId: number | null;
+  portfolioId: number | null;
+  commentId: number | null;
+  isRead: boolean;
+  createdAt: string;
+  senderName: string | null;
+  senderAvatar: string | null;
 }

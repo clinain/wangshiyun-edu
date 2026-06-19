@@ -2509,11 +2509,286 @@ const getGradeByName = (gradeName) => {
   return null;
 };
 
+// ==================== 核心素养维度配置 ====================
+
+/**
+ * 通用核心素养维度配置（用于未配置特定维度的学科）
+ */
+const defaultDimensionConfig = {
+  dimensions: [
+    {
+      id: 'knowledge_understanding',
+      name: '知识理解',
+      description: '理解本学科的基本概念、原理和方法',
+      objectiveTemplates: ['理解本课涉及的基本概念', '掌握核心知识点']
+    },
+    {
+      id: 'ability_development',
+      name: '能力发展',
+      description: '发展本学科相关的核心能力',
+      objectiveTemplates: ['能够运用所学知识解决问题', '培养分析和实践能力']
+    },
+    {
+      id: 'quality_cultivation',
+      name: '素养培育',
+      description: '培养学科素养和综合品质',
+      objectiveTemplates: ['培养学习兴趣和探究精神', '形成正确的价值观和态度']
+    }
+  ],
+  minDimensions: 2,
+  goalsPerDimension: [1, 3]
+};
+
+/**
+ * 各学科核心素养维度配置映射表
+ * 基于《义务教育课程标准（2022年版）》和《普通高中课程标准》
+ */
+const subjectDimensionMap = {
+  // ===== 语文 =====
+  '语文': {
+    dimensions: [
+      { id: 'language_construction', name: '语言建构与运用', description: '积累语言材料，感受语言文字的特点，丰富语言经验，培养语感', objectiveTemplates: ['能够正确、流利、有感情地朗读课文', '积累本课优美的词句和段落', '能够用自己的语言表达对课文的理解'] },
+      { id: 'thinking_development', name: '思维发展与提升', description: '通过语言运用，发展形象思维、逻辑思维和辩证思维', objectiveTemplates: ['通过分析课文结构，发展逻辑思维能力', '能够对课文内容进行分析、比较和归纳'] },
+      { id: 'aesthetic_appreciation', name: '审美鉴赏与创造', description: '感受语言文字之美，培养审美意识和审美创造能力', objectiveTemplates: ['感受课文语言的优美，体会作者的情感表达', '能够欣赏文学作品的艺术魅力'] },
+      { id: 'cultural_inheritance', name: '文化传承与理解', description: '热爱中华文化，继承优秀传统文化，增强文化自信', objectiveTemplates: ['了解课文涉及的传统文化知识', '增强对中华优秀传统文化的认同感'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 数学 =====
+  '数学': {
+    dimensions: [
+      { id: 'number_sense', name: '数感', description: '理解数的意义，建立数感，体会数与数量的关系', objectiveTemplates: ['理解本课涉及的数的概念', '能够在具体情境中把握数的大小关系'] },
+      { id: 'operation_ability', name: '运算能力', description: '能够准确、合理地进行计算', objectiveTemplates: ['掌握本课的计算方法', '能够正确进行运算并验证结果'] },
+      { id: 'geometric_intuition', name: '几何直观', description: '利用图形描述和分析问题', objectiveTemplates: ['能够运用图形表示数学关系', '发展空间观念和几何直觉'] },
+      { id: 'reasoning_ability', name: '推理能力', description: '发展合情推理和演绎推理能力', objectiveTemplates: ['能够进行简单的数学推理', '学会用逻辑方式表达数学思考'] },
+      { id: 'model_awareness', name: '模型意识', description: '感悟数学模型的价值，学会用数学模型解决问题', objectiveTemplates: ['能够从实际问题中抽象出数学模型', '体会数学建模的基本过程'] },
+      { id: 'data_awareness', name: '数据意识', description: '感受数据的意义和作用，学会用数据说话', objectiveTemplates: ['能够收集和整理数据', '学会用统计图表表达数据'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 英语 =====
+  '英语': {
+    dimensions: [
+      { id: 'language_ability', name: '语言能力', description: '理解语言含义，能在真实情境中进行有效交流', objectiveTemplates: ['掌握本课的词汇和句型', '能够在情境中正确运用所学语言'] },
+      { id: 'cultural_awareness', name: '文化意识', description: '了解中外文化，增强跨文化交际意识', objectiveTemplates: ['了解与课文相关的文化背景知识', '培养跨文化理解能力'] },
+      { id: 'thinking_quality', name: '思维品质', description: '发展逻辑思维、批判性思维和创新思维', objectiveTemplates: ['能够用英语进行分析和推理', '培养多角度思考问题的能力'] },
+      { id: 'learning_ability', name: '学习能力', description: '掌握有效的英语学习策略，形成自主学习能力', objectiveTemplates: ['学会运用有效的英语学习方法', '养成自主学习和合作学习的习惯'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 道德与法治 =====
+  '道德与法治': {
+    dimensions: [
+      { id: 'political_identity', name: '政治认同', description: '认同中国特色社会主义，厚植爱国主义情感', objectiveTemplates: ['增强对国家和民族的认同感', '理解社会主义核心价值观的内涵'] },
+      { id: 'moral_cultivation', name: '道德修养', description: '提升道德品质，形成良好行为习惯', objectiveTemplates: ['明辨是非善恶，做出正确道德判断', '养成良好的道德行为习惯'] },
+      { id: 'legal_awareness', name: '法治观念', description: '树立法治意识，尊法学法守法用法', objectiveTemplates: ['了解相关的法律知识', '树立遵纪守法的意识'] },
+      { id: 'healthy_personality', name: '健全人格', description: '培养自尊自信、理性平和的健康心态', objectiveTemplates: ['正确认识自我，培养自信心', '学会调节情绪，保持积极心态'] },
+      { id: 'responsibility', name: '责任意识', description: '增强社会责任感，主动承担社会责任', objectiveTemplates: ['认识到个人对家庭、社会的责任', '培养积极参与社会公共事务的意识'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 科学（小学） =====
+  '科学': {
+    dimensions: [
+      { id: 'scientific_concept', name: '科学观念', description: '理解基本的科学概念，形成科学的世界观', objectiveTemplates: ['理解本课涉及的科学概念', '能够用科学观念解释自然现象'] },
+      { id: 'scientific_thinking', name: '科学思维', description: '发展探究能力和创新思维', objectiveTemplates: ['能够运用分析、综合、比较等思维方法', '培养逻辑推理和批判性思维能力'] },
+      { id: 'inquiry_practice', name: '探究实践', description: '掌握基本的科学探究方法，体验科学探究过程', objectiveTemplates: ['能够提出科学问题并作出假设', '学会设计简单实验验证猜想'] },
+      { id: 'social_responsibility', name: '社会责任', description: '了解科学技术与社会的关系，树立环保意识', objectiveTemplates: ['认识到科学技术对生活的影响', '树立环境保护和可持续发展意识'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 物理 =====
+  '物理': {
+    dimensions: [
+      { id: 'physics_concept', name: '物理观念', description: '形成物质观念、运动与相互作用观念、能量观念', objectiveTemplates: ['理解本课涉及的物理概念和规律', '能够用物理观念解释自然现象'] },
+      { id: 'scientific_thinking', name: '科学思维', description: '基于经验事实建构物理模型，进行科学推理和论证', objectiveTemplates: ['能够运用物理模型分析问题', '学会用逻辑推理和科学论证解决问题'] },
+      { id: 'experimental_inquiry', name: '实验探究', description: '具有科学探究意识，能发现问题、设计方案、获取证据', objectiveTemplates: ['能够根据问题设计实验方案', '学会收集和分析实验证据'] },
+      { id: 'scientific_attitude', name: '科学态度与责任', description: '具有探索自然的好奇心和内在动力，实事求是的科学态度', objectiveTemplates: ['保持对物理现象的好奇心和探究欲', '养成实事求是的科学态度'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 化学 =====
+  '化学': {
+    dimensions: [
+      { id: 'macro_micro', name: '宏观辨识与微观探析', description: '从不同尺度认识物质的组成、结构和性质', objectiveTemplates: ['能够从宏观角度认识物质的性质', '学会从微观角度分析化学变化'] },
+      { id: 'change_concept', name: '变化观念与平衡思想', description: '认识物质变化的规律，理解化学平衡', objectiveTemplates: ['理解化学变化的本质和规律', '认识化学反应中的能量变化'] },
+      { id: 'evidence_reasoning', name: '证据推理与模型认知', description: '基于证据进行推理，运用模型认识物质', objectiveTemplates: ['能够根据实验现象进行逻辑推理', '学会运用模型解释化学问题'] },
+      { id: 'experiment_inquiry', name: '科学探究与创新意识', description: '发现和提出有价值的问题，勇于创新', objectiveTemplates: ['能够发现和提出化学问题', '学会设计实验方案并实施探究'] },
+      { id: 'scientific_attitude', name: '科学态度与社会责任', description: '严谨求实的科学态度，关注化学与社会的关系', objectiveTemplates: ['养成严谨求实的科学态度', '关注化学在生活和社会中的应用'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 生物学 =====
+  '生物学': {
+    dimensions: [
+      { id: 'life_concept', name: '生命观念', description: '形成结构与功能、进化与适应、稳态与平衡等生命观念', objectiveTemplates: ['理解生命现象背后的本质规律', '形成结构与功能相适应的观念'] },
+      { id: 'scientific_thinking', name: '科学思维', description: '运用归纳概括、演绎推理、模型建构等方法', objectiveTemplates: ['能够运用科学思维方法分析生命问题', '学会建构和运用生物学模型'] },
+      { id: 'inquiry_practice', name: '探究实践', description: '观察生命现象，提出问题，设计实验，获取证据', objectiveTemplates: ['能够观察并提出生物学问题', '学会设计实验方案并分析结果'] },
+      { id: 'social_responsibility', name: '社会责任', description: '关注生物技术应用，树立健康生活和环保意识', objectiveTemplates: ['关注生物学相关社会议题', '树立健康生活和环境保护意识'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 历史 =====
+  '历史': {
+    dimensions: [
+      { id: 'historical_materialism', name: '唯物史观', description: '运用唯物史观认识历史发展的客观规律', objectiveTemplates: ['能够用唯物史观分析历史事件', '理解社会存在决定社会意识'] },
+      { id: 'spatiotemporal_concept', name: '时空观念', description: '在特定的时间和空间中观察和分析历史事物', objectiveTemplates: ['能够将历史事件放在特定时空背景下理解', '建立历史事件的时间和空间联系'] },
+      { id: 'historical_evidence', name: '史料实证', description: '通过搜集和辨析史料，认识和解释历史', objectiveTemplates: ['能够搜集和运用相关史料', '学会辨析史料的可信度'] },
+      { id: 'historical_explanation', name: '历史解释', description: '以史料为依据，对历史事物进行理性分析和客观评判', objectiveTemplates: ['能够对历史事件进行客观分析', '学会用自己的语言表述历史认识'] },
+      { id: 'patriotic_feeling', name: '家国情怀', description: '形成对国家和民族的认同感、归属感和责任感', objectiveTemplates: ['增强民族自豪感和文化自信', '树立为国家发展贡献力量的志向'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 地理 =====
+  '地理': {
+    dimensions: [
+      { id: 'human_earth_coordination', name: '人地协调观', description: '正确认识人类活动与地理环境的关系', objectiveTemplates: ['理解人类活动对地理环境的影响', '树立可持续发展的人地协调观念'] },
+      { id: 'comprehensive_thinking', name: '综合思维', description: '从多个维度综合认识地理事物和现象', objectiveTemplates: ['能够从多角度分析地理问题', '学会综合考虑地理要素之间的关系'] },
+      { id: 'regional_cognition', name: '区域认知', description: '从区域视角认识地理环境', objectiveTemplates: ['能够运用区域分析方法认识地理事物', '学会比较不同区域的地理特征'] },
+      { id: 'geographic_practice', name: '地理实践力', description: '在实践中获取和运用地理知识', objectiveTemplates: ['能够运用地图和地理工具获取信息', '学会开展地理调查和实践活动'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 信息科技 / 信息技术 =====
+  '信息科技': {
+    dimensions: [
+      { id: 'information_awareness', name: '信息意识', description: '认识到信息的重要性，具有敏感的信息感知能力', objectiveTemplates: ['认识到信息在学习和生活中的价值', '能够主动获取和有效利用信息'] },
+      { id: 'computational_thinking', name: '计算思维', description: '用计算机科学的方式思考和解决问题', objectiveTemplates: ['能够运用算法思维分析问题', '学会用抽象和分解的方法处理复杂问题'] },
+      { id: 'digital_learning', name: '数字化学习与创新', description: '利用数字化工具和资源进行学习和创新', objectiveTemplates: ['能够使用数字化工具辅助学习', '学会利用信息技术进行创新实践'] },
+      { id: 'information_responsibility', name: '信息社会责任', description: '安全、负责任地使用信息和信息技术', objectiveTemplates: ['树立信息安全和隐私保护意识', '养成文明健康的信息使用习惯'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  '信息技术': {
+    dimensions: [
+      { id: 'information_awareness', name: '信息意识', description: '认识到信息的重要性，具有敏感的信息感知能力', objectiveTemplates: ['认识到信息在学习和生活中的价值', '能够主动获取和有效利用信息'] },
+      { id: 'computational_thinking', name: '计算思维', description: '用计算机科学的方式思考和解决问题', objectiveTemplates: ['能够运用算法思维分析问题', '学会用抽象和分解的方法处理复杂问题'] },
+      { id: 'digital_learning', name: '数字化学习与创新', description: '利用数字化工具和资源进行学习和创新', objectiveTemplates: ['能够使用数字化工具辅助学习', '学会利用信息技术进行创新实践'] },
+      { id: 'information_responsibility', name: '信息社会责任', description: '安全、负责任地使用信息和信息技术', objectiveTemplates: ['树立信息安全和隐私保护意识', '养成文明健康的信息使用习惯'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 音乐 =====
+  '音乐': {
+    dimensions: [
+      { id: 'aesthetic_perception', name: '审美感知', description: '感受音乐之美，体验音乐的情感表达', objectiveTemplates: ['能够感受音乐的节奏、旋律之美', '体会音乐作品的情感内涵'] },
+      { id: 'artistic_expression', name: '艺术表现', description: '能够用音乐的方式表达情感和想法', objectiveTemplates: ['能够准确演唱或演奏本课内容', '学会用音乐表达个人情感'] },
+      { id: 'creative_practice', name: '创意实践', description: '在音乐活动中进行创新和创造', objectiveTemplates: ['能够参与音乐创编活动', '尝试用不同方式表现音乐'] },
+      { id: 'cultural_understanding', name: '文化理解', description: '理解音乐的文化内涵，尊重多元文化', objectiveTemplates: ['了解音乐作品的文化背景', '尊重和欣赏不同民族的音乐文化'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 美术 =====
+  '美术': {
+    dimensions: [
+      { id: 'aesthetic_perception', name: '审美感知', description: '感受美的事物，形成审美判断能力', objectiveTemplates: ['能够感受美术作品的美感', '学会从多角度欣赏艺术作品'] },
+      { id: 'artistic_expression', name: '艺术表现', description: '通过创作表达自己的想法和情感', objectiveTemplates: ['能够运用美术语言进行创作', '学会用视觉艺术表达个人想法'] },
+      { id: 'creative_practice', name: '创意实践', description: '在美术活动中进行创造性实践', objectiveTemplates: ['能够进行有创意的美术创作', '尝试多种材料和技法的表现'] },
+      { id: 'cultural_understanding', name: '文化理解', description: '理解美术与文化的关系，尊重文化多样性', objectiveTemplates: ['了解美术作品的文化意义', '尊重和欣赏不同文化的艺术'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 体育与健康 =====
+  '体育与健康': {
+    dimensions: [
+      { id: 'motor_skills', name: '运动能力', description: '掌握基本运动技能，发展体能', objectiveTemplates: ['掌握本课涉及的运动技术', '发展相关的体能素质'] },
+      { id: 'health_behavior', name: '健康行为', description: '养成健康的生活方式和锻炼习惯', objectiveTemplates: ['了解运动与健康的关系', '养成积极参与体育锻炼的习惯'] },
+      { id: 'sports_morality', name: '体育品德', description: '培养团队合作精神和公平竞争意识', objectiveTemplates: ['在运动中学会尊重规则和对手', '培养坚持不懈和团队合作的品质'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 劳动 =====
+  '劳动': {
+    dimensions: [
+      { id: 'labor_concept', name: '劳动观念', description: '认识劳动的价值，树立正确的劳动观念', objectiveTemplates: ['理解劳动的意义和价值', '树立劳动最光荣的观念'] },
+      { id: 'labor_ability', name: '劳动能力', description: '掌握基本劳动技能，提高动手实践能力', objectiveTemplates: ['掌握本课涉及的劳动技能', '能够独立完成劳动任务'] },
+      { id: 'labor_habits', name: '劳动习惯与品质', description: '养成良好的劳动习惯，形成认真负责的品质', objectiveTemplates: ['养成主动参与劳动的习惯', '在劳动中培养认真细致的品质'] },
+      { id: 'labor_spirit', name: '劳动精神', description: '崇尚劳动、尊重劳动，弘扬劳动精神', objectiveTemplates: ['尊重每一位劳动者', '在劳动中体验创造的快乐'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 思想政治（高中） =====
+  '思想政治': {
+    dimensions: [
+      { id: 'political_identity', name: '政治认同', description: '认同中国特色社会主义，坚定理想信念', objectiveTemplates: ['增强对中国特色社会主义的认同', '理解国家大政方针'] },
+      { id: 'scientific_thinking', name: '科学精神', description: '坚持马克思主义世界观和方法论', objectiveTemplates: ['能够运用辩证唯物主义分析问题', '培养理性思维和批判精神'] },
+      { id: 'rule_of_law', name: '法治意识', description: '尊法学法守法用法，依法维护自身权益', objectiveTemplates: ['增强法治观念和法律意识', '学会用法律手段解决问题'] },
+      { id: 'public_participation', name: '公共参与', description: '有序参与公共事务，承担社会责任', objectiveTemplates: ['积极参与社会公共事务', '培养公民责任意识'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  },
+  // ===== 通用技术（高中） =====
+  '通用技术': {
+    dimensions: [
+      { id: 'technology_concept', name: '技术意识', description: '形成对技术的敏感性和亲近感', objectiveTemplates: ['理解技术的性质和价值', '关注技术发展对社会的影响'] },
+      { id: 'engineering_thinking', name: '工程思维', description: '以系统分析和比较权衡为核心', objectiveTemplates: ['能够运用系统方法分析技术问题', '学会在设计中进行比较和权衡'] },
+      { id: 'design_awareness', name: '创新设计', description: '基于技术问题进行创新性方案构思', objectiveTemplates: ['能够提出创新性的设计方案', '学会优化和改进设计方案'] },
+      { id: 'tool_using', name: '图样表达', description: '运用图样表达设计意图', objectiveTemplates: ['能够绘制简单的技术图样', '学会识读和理解技术图纸'] },
+      { id: 'operation_capability', name: '物化能力', description: '将方案转化为产品或模型', objectiveTemplates: ['能够制作简单的产品原型', '学会使用基本工具进行制作'] }
+    ],
+    minDimensions: 2,
+    goalsPerDimension: [1, 3]
+  }
+};
+
+/**
+ * 获取学科的核心素养维度配置
+ * @param {string} subject 学科名称
+ * @param {string} stage 学段 (primary/middle/high)
+ * @returns {Object} 维度配置
+ */
+const getDimensionConfig = (subject, stage) => {
+  // 优先从学科维度映射表中获取
+  if (subjectDimensionMap[subject]) {
+    return subjectDimensionMap[subject];
+  }
+
+  // 尝试从学科配置中获取
+  const config = getSubjectConfig(subject, stage);
+  if (config && config.dimensionConfig) {
+    return config.dimensionConfig;
+  }
+
+  // 跨学段搜索
+  const stages = ['primary', 'middle', 'high'];
+  for (const tryStage of stages) {
+    if (tryStage !== stage) {
+      const tryConfig = getSubjectConfig(subject, tryStage);
+      if (tryConfig && tryConfig.dimensionConfig) {
+        return tryConfig.dimensionConfig;
+      }
+    }
+  }
+
+  // 返回通用维度配置
+  return defaultDimensionConfig;
+};
+
 module.exports = {
   subjectsConfig,
   getSubjectConfig,
   getAllSubjects,
   getAllStages,
   getStageByGrade,
-  getGradeByName
+  getGradeByName,
+  getDimensionConfig,
+  defaultDimensionConfig,
+  subjectDimensionMap
 };

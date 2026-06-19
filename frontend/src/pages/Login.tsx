@@ -1,46 +1,190 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import Modal from '../components/Modal';
+import { authAPI } from '../api';
 
 const Login: React.FC = () => {
   const location = useLocation();
   const [isLogin, setIsLogin] = useState(location.pathname !== '/register');
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [forgotPasswordCode, setForgotPasswordCode] = useState('');
+  const [forgotPasswordNewPassword, setForgotPasswordNewPassword] = useState('');
+  const [forgotPasswordConfirmPassword, setForgotPasswordConfirmPassword] = useState('');
+  const [forgotPasswordError, setForgotPasswordError] = useState('');
+  const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState('');
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const [forgotPasswordCodeButtonText, setForgotPasswordCodeButtonText] = useState('发送验证码');
+  const [forgotPasswordCodeButtonDisabled, setForgotPasswordCodeButtonDisabled] = useState(false);
+  const [forgotPasswordCodeCountdown, setForgotPasswordCodeCountdown] = useState(0);
+  const [forgotPasswordStep, setForgotPasswordStep] = useState<'email' | 'reset'>('email');
+  const forgotPasswordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     setIsLogin(location.pathname !== '/register');
   }, [location.pathname]);
-  const [phone, setPhone] = useState('');
+
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [codeButtonText, setCodeButtonText] = useState('发送验证码');
+  const [codeButtonDisabled, setCodeButtonDisabled] = useState(false);
+  const [codeCountdown, setCodeCountdown] = useState(0);
+  const [loginMethod, setLoginMethod] = useState<'password' | 'code'>('password');
+
   const navigate = useNavigate();
   const { login, register } = useAuth();
+
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (codeCountdown > 0) {
+      timerRef.current = setInterval(() => {
+        setCodeCountdown(prev => {
+          if (prev <= 1) {
+            setCodeButtonText('发送验证码');
+            setCodeButtonDisabled(false);
+            return 0;
+          }
+          setCodeButtonText(`重新发送(${prev - 1}s)`);
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [codeCountdown]);
+
+  // 忘记密码验证码倒计时
+  useEffect(() => {
+    if (forgotPasswordCodeCountdown > 0) {
+      forgotPasswordTimerRef.current = setInterval(() => {
+        setForgotPasswordCodeCountdown(prev => {
+          if (prev <= 1) {
+            setForgotPasswordCodeButtonText('发送验证码');
+            setForgotPasswordCodeButtonDisabled(false);
+            return 0;
+          }
+          setForgotPasswordCodeButtonText(`重新发送(${prev - 1}s)`);
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (forgotPasswordTimerRef.current) {
+        clearInterval(forgotPasswordTimerRef.current);
+        forgotPasswordTimerRef.current = null;
+      }
+    };
+  }, [forgotPasswordCodeCountdown]);
+
+  const handleSendVerificationCode = async () => {
+    if (!email) {
+      setError('请先输入邮箱');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError('请输入正确的邮箱格式');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await authAPI.sendVerificationCode({ email });
+      setCodeButtonDisabled(true);
+      setCodeCountdown(60);
+      setCodeButtonText('重新发送(60s)');
+      setSuccessMessage('验证码已发送到您的邮箱，如果没有收到验证码，请查看垃圾邮箱');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '发送验证码失败，请稍后重试';
+      setError(errorMessage);
+      setSuccessMessage('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendLoginCode = async () => {
+    if (!email) {
+      setError('请先输入邮箱');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError('请输入正确的邮箱格式');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      await authAPI.sendLoginCode({ email });
+      setCodeButtonDisabled(true);
+      setCodeCountdown(60);
+      setCodeButtonText('重新发送(60s)');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '发送验证码失败，请稍后重试';
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setSuccessMessage('');
 
     try {
       if (isLogin) {
-        await login(phone, password);
+        if (loginMethod === 'code') {
+          if (!verificationCode) {
+            setError('请输入验证码');
+            setLoading(false);
+            return;
+          }
+          await login(email, password, verificationCode);
+        } else {
+          await login(email, password);
+        }
         navigate('/dashboard');
       } else {
         if (password !== confirmPassword) {
           setError('两次输入的密码不一致');
           return;
         }
-        await register(phone, password);
+        if (!verificationCode) {
+          setError('请输入验证码');
+          return;
+        }
+        await register(email, password, verificationCode);
         setIsLogin(true);
+        setVerificationCode('');
       }
     } catch (err) {
-      setError(isLogin ? '手机号或密码错误' : '注册失败，请稍后重试');
+      const errorMessage = err instanceof Error ? err.message : (isLogin ? '邮箱或密码错误' : '注册失败，请稍后重试');
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -50,17 +194,22 @@ const Login: React.FC = () => {
     const newMode = !isLogin;
     setIsLogin(newMode);
     setError('');
+    setSuccessMessage('');
+    setVerificationCode('');
     if (newMode) {
-      navigate('/login', { replace: true });
-    } else {
       navigate('/register', { replace: true });
+    } else {
+      navigate('/login', { replace: true });
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row"
       style={{
-        background: 'linear-gradient(135deg, #ffe4e4 0%, #fffcfb 50%, #f7bebe 100%)',
+        backgroundImage: 'linear-gradient(135deg, rgba(255, 228, 228, 0.86) 0%, rgba(255, 252, 251, 0.82) 50%, rgba(247, 190, 190, 0.86) 100%), url("/background.png")',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
         fontFamily: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
       }}
     >
@@ -144,39 +293,129 @@ const Login: React.FC = () => {
                 {error}
               </div>
             )}
+            {successMessage && !isLogin && (
+              <div className="mb-3 p-2.5 bg-green-50 border border-green-200 rounded-xl text-green-600 text-sm flex items-start gap-2">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <span>{successMessage}</span>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-3">
               <Input
-                label="手机号/账号"
-                placeholder="请输入手机号或账号"
-                value={phone}
-                onChange={setPhone}
+                label={isLogin ? '邮箱/账号' : '邮箱'}
+                placeholder={isLogin ? '请输入邮箱或账号' : '请输入邮箱'}
+                value={email}
+                onChange={setEmail}
               />
-              <Input
-                label="密码"
-                type="password"
-                placeholder="请输入密码"
-                value={password}
-                onChange={setPassword}
-              />
+              {isLogin && loginMethod === 'password' && (
+                <Input
+                  label="密码"
+                  type="password"
+                  placeholder="请输入密码"
+                  value={password}
+                  onChange={setPassword}
+                />
+              )}
+              {isLogin && loginMethod === 'code' && (
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <Input
+                      label="验证码"
+                      placeholder="请输入验证码"
+                      value={verificationCode}
+                      onChange={setVerificationCode}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      className="px-4 py-2 bg-primary-500 text-white rounded-lg text-sm hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                      style={{ height: '40px', marginTop: '18px' }}
+                      disabled={codeButtonDisabled || loading}
+                      onClick={handleSendLoginCode}
+                    >
+                      {codeButtonText}
+                    </button>
+                  </div>
+                </div>
+              )}
               {!isLogin && (
                 <Input
-                  label="确认密码"
+                  label="密码"
                   type="password"
-                  placeholder="请再次输入密码"
-                  value={confirmPassword}
-                  onChange={setConfirmPassword}
+                  placeholder="请输入密码"
+                  value={password}
+                  onChange={setPassword}
                 />
+              )}
+              {!isLogin && (
+                <>
+                  <Input
+                    label="确认密码"
+                    type="password"
+                    placeholder="请再次输入密码"
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                  />
+                  <div className="flex gap-3">
+                    <Input
+                      label="验证码"
+                      placeholder="请输入验证码"
+                      value={verificationCode}
+                      onChange={setVerificationCode}
+                    />
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        className="px-4 py-2 bg-primary-500 text-white rounded-lg text-sm hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        style={{ height: '40px', marginTop: '18px' }}
+                        disabled={codeButtonDisabled || loading}
+                        onClick={handleSendVerificationCode}
+                      >
+                        {codeButtonText}
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
               {isLogin && (
                 <div className="flex items-center justify-between text-sm">
-                  <label className="flex items-center gap-2 text-text-muted cursor-pointer">
-                    <input type="checkbox" className="rounded border-border-pink text-primary-500 focus:ring-primary-300 cursor-pointer" />
-                    <span className="select-none">记住我</span>
-                  </label>
-                  <button type="button" className="text-primary-500 hover:text-primary-600 hover:underline">
-                    忘记密码？
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className={`text-sm ${loginMethod === 'password' ? 'text-primary-500 font-medium' : 'text-text-muted hover:text-primary-500'}`}
+                      onClick={() => { setLoginMethod('password'); setVerificationCode(''); setError(''); }}
+                    >
+                      密码登录
+                    </button>
+                    <span className="text-border-pink">|</span>
+                    <button
+                      type="button"
+                      className={`text-sm ${loginMethod === 'code' ? 'text-primary-500 font-medium' : 'text-text-muted hover:text-primary-500'}`}
+                      onClick={() => { setLoginMethod('code'); setPassword(''); setError(''); }}
+                    >
+                      验证码登录
+                    </button>
+                  </div>
+                  {loginMethod === 'password' && (
+                    <button type="button" className="text-primary-500 hover:text-primary-600 hover:underline" onClick={() => {
+                      setShowForgotPasswordModal(true);
+                      setForgotPasswordError('');
+                      setForgotPasswordSuccess('');
+                      setForgotPasswordStep('email');
+                      setForgotPasswordEmail(email || '');
+                      setForgotPasswordCode('');
+                      setForgotPasswordNewPassword('');
+                      setForgotPasswordConfirmPassword('');
+                      setForgotPasswordCodeButtonText('发送验证码');
+                      setForgotPasswordCodeButtonDisabled(false);
+                      setForgotPasswordCodeCountdown(0);
+                    }}>
+                      忘记密码？
+                    </button>
+                  )}
                 </div>
               )}
               <Button type="submit" size="lg" loading={loading} className="w-full">
@@ -272,16 +511,6 @@ const Login: React.FC = () => {
             </p>
           </section>
 
-          <section>
-            <h5 className="font-medium text-gray-800 mb-2">六、联系方式</h5>
-            <p className="text-gray-600 leading-relaxed">
-              如有任何疑问或建议，请通过以下渠道联系我们：
-            </p>
-            <ul className="text-gray-600 leading-relaxed list-disc list-inside space-y-1 mt-2">
-              <li>客服电话：18920162983（联系人：cheng）</li>
-            </ul>
-          </section>
-
           <p className="text-xs text-gray-400 mt-4 text-center">
             本条款自2026年1月1日起生效
           </p>
@@ -299,7 +528,7 @@ const Login: React.FC = () => {
           <section>
             <h5 className="font-medium text-gray-800 mb-2">一、信息收集</h5>
             <p className="text-gray-600 leading-relaxed">
-              本平台收集用户的基本信息（手机号、账号、密码等）用于身份认证和服务提供。
+              本平台收集用户的基本信息（邮箱、账号、密码等）用于身份认证和服务提供。
             </p>
           </section>
 
@@ -354,6 +583,155 @@ const Login: React.FC = () => {
           <p className="text-xs text-gray-400 mt-4 text-center">
             本政策自2026年1月1日起生效
           </p>
+        </div>
+      </Modal>
+      {/* 忘记密码模态框 */}
+      <Modal
+        isOpen={showForgotPasswordModal}
+        onClose={() => {
+          setShowForgotPasswordModal(false);
+          setForgotPasswordError('');
+          setForgotPasswordSuccess('');
+          setForgotPasswordStep('email');
+        }}
+        title="重置密码"
+      >
+        <div className="space-y-4">
+          {forgotPasswordError && (
+            <div className="p-2.5 bg-danger-50 border border-danger-200 rounded-xl text-danger-600 text-sm">
+              {forgotPasswordError}
+            </div>
+          )}
+          {forgotPasswordSuccess && (
+            <div className="p-2.5 bg-green-50 border border-green-200 rounded-xl text-green-600 text-sm flex items-start gap-2">
+              <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              <span>{forgotPasswordSuccess}</span>
+            </div>
+          )}
+
+          {forgotPasswordStep === 'email' && (
+            <>
+              <p className="text-sm text-text-muted">请输入注册时使用的邮箱地址，我们将发送验证码帮助您重置密码。</p>
+              <Input
+                label="邮箱"
+                placeholder="请输入邮箱"
+                value={forgotPasswordEmail}
+                onChange={setForgotPasswordEmail}
+              />
+              <div className="flex gap-3">
+                <Input
+                  label="验证码"
+                  placeholder="请输入验证码"
+                  value={forgotPasswordCode}
+                  onChange={setForgotPasswordCode}
+                />
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    className="px-4 py-2 bg-primary-500 text-white rounded-lg text-sm hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    style={{ height: '40px', marginTop: '18px' }}
+                    disabled={forgotPasswordCodeButtonDisabled || forgotPasswordLoading}
+                    onClick={async () => {
+                      if (!forgotPasswordEmail) {
+                        setForgotPasswordError('请先输入邮箱');
+                        return;
+                      }
+                      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                      if (!emailRegex.test(forgotPasswordEmail)) {
+                        setForgotPasswordError('请输入正确的邮箱格式');
+                        return;
+                      }
+                      setForgotPasswordLoading(true);
+                      setForgotPasswordError('');
+                      setForgotPasswordSuccess('');
+                      try {
+                        await authAPI.sendResetPasswordCode({ email: forgotPasswordEmail });
+                        setForgotPasswordCodeButtonDisabled(true);
+                        setForgotPasswordCodeCountdown(60);
+                        setForgotPasswordCodeButtonText('重新发送(60s)');
+                        setForgotPasswordSuccess('验证码已发送到您的邮箱，如果没有收到验证码，请查看垃圾邮箱');
+                      } catch (err) {
+                        const errorMessage = err instanceof Error ? err.message : '发送验证码失败，请稍后重试';
+                        setForgotPasswordError(errorMessage);
+                      } finally {
+                        setForgotPasswordLoading(false);
+                      }
+                    }}
+                  >
+                    {forgotPasswordCodeButtonText}
+                  </button>
+                </div>
+              </div>
+              <Input
+                label="新密码"
+                type="password"
+                placeholder="请输入新密码（6-20个字符）"
+                value={forgotPasswordNewPassword}
+                onChange={setForgotPasswordNewPassword}
+              />
+              <Input
+                label="确认新密码"
+                type="password"
+                placeholder="请再次输入新密码"
+                value={forgotPasswordConfirmPassword}
+                onChange={setForgotPasswordConfirmPassword}
+              />
+              <Button
+                type="button"
+                size="lg"
+                loading={forgotPasswordLoading}
+                className="w-full"
+                onClick={async () => {
+                  if (!forgotPasswordEmail) {
+                    setForgotPasswordError('请输入邮箱');
+                    return;
+                  }
+                  if (!forgotPasswordCode) {
+                    setForgotPasswordError('请输入验证码');
+                    return;
+                  }
+                  if (!forgotPasswordNewPassword) {
+                    setForgotPasswordError('请输入新密码');
+                    return;
+                  }
+                  if (forgotPasswordNewPassword.length < 6 || forgotPasswordNewPassword.length > 20) {
+                    setForgotPasswordError('新密码长度必须在6-20个字符之间');
+                    return;
+                  }
+                  if (forgotPasswordNewPassword !== forgotPasswordConfirmPassword) {
+                    setForgotPasswordError('两次输入的密码不一致');
+                    return;
+                  }
+                  setForgotPasswordLoading(true);
+                  setForgotPasswordError('');
+                  setForgotPasswordSuccess('');
+                  try {
+                    await authAPI.resetPassword({
+                      email: forgotPasswordEmail,
+                      verificationCode: forgotPasswordCode,
+                      newPassword: forgotPasswordNewPassword,
+                    });
+                    setForgotPasswordSuccess('密码重置成功！请使用新密码登录');
+                    setForgotPasswordError('');
+                    setTimeout(() => {
+                      setShowForgotPasswordModal(false);
+                      setForgotPasswordSuccess('');
+                      setForgotPasswordStep('email');
+                    }, 2000);
+                  } catch (err) {
+                    const errorMessage = err instanceof Error ? err.message : '密码重置失败，请稍后重试';
+                    setForgotPasswordError(errorMessage);
+                  } finally {
+                    setForgotPasswordLoading(false);
+                  }
+                }}
+              >
+                重置密码
+              </Button>
+            </>
+          )}
         </div>
       </Modal>
     </div>

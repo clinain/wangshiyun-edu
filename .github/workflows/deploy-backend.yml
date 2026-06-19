@@ -1,4 +1,4 @@
-name: 部署后端到服务器
+name: Deploy backend
 
 on:
   push:
@@ -10,45 +10,42 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PATH: ${{ secrets.SERVER_PATH }}
     steps:
-      - name: 检出代码
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 设置 Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - name: 安装后端依赖
+      - name: Install backend dependencies
         working-directory: backend
         run: npm ci --production
 
-      # ============================================
-      # 注意：后端部署需要配置以下 Secrets：
-      # - SERVER_HOST: 服务器 IP 地址
-      # - SERVER_USER: 服务器用户名
-      # - SERVER_SSH_KEY: SSH 私钥
-      # - SERVER_PATH: 服务器上的项目路径
-      # ============================================
-
-      - name: 部署到服务器
-        if: ${{ secrets.SERVER_HOST != '' }}
+      - name: Deploy backend to server
+        if: ${{ env.SERVER_HOST != '' }}
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "backend/*"
-          target: ${{ secrets.SERVER_PATH }}
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
+          source: 'backend/*'
+          target: ${{ env.SERVER_PATH }}
           strip_components: 0
 
-      - name: 重启后端服务
-        if: ${{ secrets.SERVER_HOST != '' }}
+      - name: Restart backend service
+        if: ${{ env.SERVER_HOST != '' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          host: ${{ env.SERVER_HOST }}
+          username: ${{ env.SERVER_USER }}
+          key: ${{ env.SERVER_SSH_KEY }}
           script: |
-            cd ${{ secrets.SERVER_PATH }}
+            cd ${{ env.SERVER_PATH }}
             pm2 restart wangshiyun-api || pm2 start backend/server.js --name wangshiyun-api

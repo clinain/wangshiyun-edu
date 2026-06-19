@@ -15,10 +15,10 @@ router.get('/public', optionalAuth, lessonController.getPublicLessons);
 router.get('/subjects', lessonController.getAvailableSubjects);
 
 // 教案生成（学科感知版本，支持全学段）
-router.post('/generate-aware', optionalAuth, lessonController.generateSubjectAwareLesson);
+router.post('/generate-aware', auth, lessonController.generateSubjectAwareLesson);
 
 // 教案生成（原有版本）
-router.post('/generate', optionalAuth, lessonController.generateByAI);  // generate 要在 :id 前面
+router.post('/generate', auth, lessonController.generateByAI);  // generate 要在 :id 前面
 
 // 需要认证的路由
 router.post('/', auth, lessonController.createLesson);
