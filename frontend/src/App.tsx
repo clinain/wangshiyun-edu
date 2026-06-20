@@ -22,6 +22,7 @@ import PPTDetail from '@/pages/PPTDetail';
 import Profile from '@/pages/Profile';
 import KnowledgeBase from '@/pages/KnowledgeBase';
 import UserManagement from '@/pages/Admin/UserManagement';
+import Showcase from '@/pages/Showcase';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAuth();
@@ -92,6 +93,12 @@ const App: React.FC = () => {
               <PublicRoute>
                 <Login />
               </PublicRoute>
+            }
+          />
+          <Route
+            path="/showcase"
+            element={
+              <Showcase />
             }
           />
           <Route

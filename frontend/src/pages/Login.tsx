@@ -44,6 +44,10 @@ const Login: React.FC = () => {
   const navigate = useNavigate();
   const { login, register } = useAuth();
 
+  const handleOpenShowcase = () => {
+    navigate('/showcase');
+  };
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -464,6 +468,17 @@ const Login: React.FC = () => {
           </div>
         </div>
       </div>
+
+
+      <button
+        type="button"
+        onClick={handleOpenShowcase}
+        className="fixed bottom-1 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-primary-200 bg-white/70 px-2.5 py-1 text-[10px] font-medium text-text-dark shadow-sm backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/90 hover:text-primary-600 sm:bottom-2"
+        aria-label="查看网师云开发教案"
+      >
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary-500 text-[9px] text-white">卷</span>
+        <span>老师别点，这是开发教案</span>
+      </button>
 
       <Modal
         isOpen={showTermsModal}
